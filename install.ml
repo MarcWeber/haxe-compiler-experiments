@@ -223,8 +223,8 @@ let action_build_haxe(cfg) =
 let action_clean(cfg) =
 	msg "clean: implementation incomplete\n";
         indir "ocaml/extc" (fun() -> command ("make clean"));
-        indir "ocaml" (fun() -> command "rm *.cmx *.cmi *.cma *.a || true");
-        command "rm *.cmx *.cmi *.cma *.a || true";
+        indir "ocaml" (fun() -> command "rm *.cmx *.cmi *.cma *.a *.o || true");
+        command "rm *.cmx *.cmi *.cma *.a *.o || true";
 	msg "TODO";;
 
 let action_dist_clean(cfg) =
