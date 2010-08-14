@@ -1,10 +1,7 @@
 From: Marc Weber <marco-oweber@gmx.de>
-Subject: [PATCH] t/install_ml
+Subject: [PATCH] t/gitignore
 
-enhance and tidy up install.ml. in particual:
-- allow running it from the main repo dir
-- add actions, so that you can some stages only
-- add action generating makefile for incremental compilations
-  (builds for me..)
+I'm using git for development.
+So add an ignore file
 
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
