@@ -31,10 +31,6 @@
 **/
 
 
-#if (cpp && !xmldoc)
-typedef XmlType = String;
-typedef Xml = cpp.CppXml__;
-#else
 
 enum XmlType {
 }
@@ -84,7 +80,7 @@ extern class Xml {
 	/**
 		Parse a String into an Xml object.
 	**/
-	static function parse( s : String ) : Xml;
+	static function parse( str : String ) : Xml;
 
 	/**
 		Creates a node of the given type.
@@ -229,28 +225,8 @@ extern class Xml {
 	**/
 	function toString() : String;
 
-#if !(php || neko)
-	static function __init__() : Void untyped {
-		#if js
-			Xml = js.JsXml__;
-		#elseif flash9
-			var ref = flash.FlashXml__; // force compile
-		#end
-		#if !flash9
-		Xml.__name__ = ["Xml"];
-		#end
-		Xml.Element = "element";
-		Xml.PCData = "pcdata";
-		Xml.CData = "cdata";
-		Xml.Comment = "comment";
-		Xml.DocType = "doctype";
-		Xml.Prolog = "prolog";
-		Xml.Document = "document";
-	}
-#end
 }
 
-#end
 
 
 

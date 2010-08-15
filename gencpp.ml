@@ -186,7 +186,7 @@ let new_context common_ctx writer debug =
 let is_internal_class = function
 	|  ([],"Int") | ([],"Void") |  ([],"String") | ([], "Null") | ([], "Float")
 	|  ([],"Array") | ([], "Class") | ([], "Enum") | ([], "Bool")
-	|  ([], "Dynamic") | ([], "ArrayAccess") -> true
+   |  ([], "Dynamic") | ([], "ArrayAccess") | (["cpp"], "FastIterator")-> true
 	|  (["cpp"], "CppInt32__") | ([],"Math") | (["haxe";"io"], "Unsigned_char__") -> true
 	| _ -> false
 
@@ -229,14 +229,16 @@ let hash_iterate hash visitor =
 let keyword_remap name =
 	match name with
 	| "int"
-	| "asm" | "auto" | "char" | "const" | "delete" | "double" | "enum"
+	| "auto" | "char" | "const" | "delete" | "double" | "enum"
 	| "extern" | "float" | "friend" | "goto" | "long" | "operator" | "protected"
 	| "register" | "short" | "signed" | "sizeof" | "template" | "typedef"
 	| "union" | "unsigned" | "void" | "volatile" | "or" | "and" | "xor" | "or_eq"
 	| "and_eq" | "xor_eq" | "typeof" | "stdin" | "stdout" | "stderr"
-	| "BIG_ENDIAN" | "LITTLE_ENDIAN"
-	| "assert" | "NULL"
+	| "BIG_ENDIAN" | "LITTLE_ENDIAN" | "assert" | "NULL" | "wchar_t"
+	| "bool" | "const_cast" | "dynamic_cast" | "explicit" | "export" | "mutable" | "namespace"
+ 	| "reinterpret_cast" | "static_cast" | "typeid" | "typename" | "virtual"
 	| "struct" -> "_" ^ name
+	| "asm" -> "_asm_"
 	| x -> x
 
 (*
@@ -308,6 +310,9 @@ let rec class_string klass suffix params =
 	(* Array class *)
 	|  ([],"Array") -> (snd klass.cl_path) ^ suffix ^ "< " ^ (String.concat ","
 					 (List.map type_string  params) ) ^ " >"
+	(* FastIterator class *)
+	|  (["cpp"],"FastIterator") -> "::cpp::FastIterator" ^ suffix ^ "< " ^ (String.concat ","
+					 (List.map type_string  params) ) ^ " >"
 	| _ when klass.cl_kind=KTypeParameter -> "Dynamic"
 	|  ([],"#Int") -> "/* # */int"
 	|  (["haxe";"io"],"Unsigned_char__") -> "unsigned char"
@@ -346,6 +351,10 @@ and type_string_suff suffix haxe_type =
 		| [] , "Array" ->
 			(match params with
 			| [t] -> "Array< " ^ (type_string (follow t) ) ^ " >"
+			| _ -> assert false)
+		| ["cpp"] , "FastIterator" ->
+			(match params with
+			| [t] -> "::cpp::FastIterator< " ^ (type_string (follow t) ) ^ " >"
 			| _ -> assert false)
 		| _ ->  type_string_suff suffix (apply_params type_def.t_types params type_def.t_type)
 		)
@@ -921,6 +930,10 @@ and find_local_return_blocks_ctx ctx retval expression =
 		| TTry (_, _)
 		| TSwitch (_, _, _) when retval ->
 				define_local_return_block_ctx ctx expression (next_anon_function_name ctx)
+      | TObjectDecl ( ("fileName" , { eexpr = (TConst (TString file)) }) ::
+         ("lineNumber" , { eexpr = (TConst (TInt line)) }) ::
+            ("className" , { eexpr = (TConst (TString class_name)) }) ::
+               ("methodName", { eexpr = (TConst (TString meth)) }) :: [] ) -> ()
 		| TObjectDecl decl_list ->
 				let name = next_anon_function_name ctx in
 				(*
@@ -1210,7 +1223,7 @@ and gen_expression ctx retval expression =
 				let want_value = (return_from_block && !remaining = 1) in
 				find_local_return_blocks_ctx ctx want_value expression;
 				let line = Lexer.find_line_index ctx.ctx_common.lines expression.epos in
-				output_i ("HX_SOURCE_POS(\"" ^ expression.epos.pfile ^ "\","
+				output_i ("HX_SOURCE_POS(\"" ^ (Ast.s_escape expression.epos.pfile) ^ "\","
 					^ (string_of_int line) ^ ")\n" );
 				output_i "";
 				ctx.ctx_return_from_internal_node <- return_from_internal_node;
@@ -1280,6 +1293,13 @@ and gen_expression ctx retval expression =
 	| TParenthesis expr when not retval ->
 			gen_expression ctx retval expr;
 	| TParenthesis expr -> output "("; gen_expression ctx retval expr; output ")"
+	| TObjectDecl (
+      ("fileName" , { eexpr = (TConst (TString file)) }) ::
+         ("lineNumber" , { eexpr = (TConst (TInt line)) }) ::
+            ("className" , { eexpr = (TConst (TString class_name)) }) ::
+               ("methodName", { eexpr = (TConst (TString meth)) }) :: [] ) ->
+       output ("hx::SourceInfo(" ^ (str file) ^ "," ^ (Printf.sprintf "%ld" line) ^ "," ^
+          (str class_name) ^ "," ^ (str meth) ^ ")" )
 	| TObjectDecl decl_list ->
 		let func_name = use_anon_function_name ctx in
 		(try output ( func_name ^ "::Block(" ^
@@ -1344,12 +1364,12 @@ and gen_expression ctx retval expression =
 			end
 		) var_list
 	| TFor (var_name, var_type, init, loop) ->
-		output ("for(Dynamic __it = ");
+		output ("for(::cpp::FastIterator_obj< " ^  (type_string var_type) ^
+             " > *__it = ::cpp::CreateFastIterator< "^(type_string var_type) ^ " >(");
 		gen_expression ctx true init;
-		output (";  __it->__Field(" ^ (str "hasNext") ^ ")(); )");
+		output (");  __it->hasNext(); )");
 		ctx.ctx_writer#begin_block;
-		output ( (type_string var_type) ^ " " ^ (keyword_remap var_name) ^
-			" = __it->__Field(" ^ (str "next") ^ ")();\n" );
+		output_i ( (type_string var_type) ^ " " ^ (keyword_remap var_name) ^ " = __it->next();\n" );
 		output_i "";
 		gen_expression ctx false loop;
 		output ";\n";
@@ -1871,7 +1891,7 @@ let find_referenced_types ctx obj super_deps constructor_deps header_only =
 			for the Array or Class class, for which we do a fully typed object *)
 		| TInst (klass,params) ->
 			(match klass.cl_path with
-				| ([],"Array") | ([],"Class") -> List.iter visit_type params
+         | ([],"Array") | ([],"Class") | (["cpp"],"FastIterator") -> List.iter visit_type params
 			| _ -> if (klass.cl_kind <> KTypeParameter ) then add_type klass.cl_path;
 			)
 		| TFun (args,haxe_type) -> visit_type haxe_type;
@@ -2387,7 +2407,7 @@ let generate_class_files common_ctx member_types super_deps constructor_deps cla
 
 		(* MARK function - only used with internal GC *)
 		output_cpp ("void " ^ class_name ^ "::__Mark(HX_MARK_PARAMS)\n{\n");
-		output_cpp ("	HX_MARK_BEGIN_CLASS(" ^ class_name ^ ");\n");
+		output_cpp ("	HX_MARK_BEGIN_CLASS(" ^ smart_class_name ^ ");\n");
 		if (implement_dynamic) then
 			output_cpp "	HX_MARK_DYNAMIC;\n";
 		List.iter
