@@ -211,6 +211,8 @@ let rec type_id ctx t =
 		type_path ctx path
 	| TEnum ({ e_path = ("flash" :: _,name); e_extern = true },_) ->
 		HMPath ([],if is_int_enum name then "int" else "String")
+	| TEnum ({ e_path = [],"XmlType"; e_extern = true },_) ->
+		HMPath ([],"String")
 	| _ ->
 		HMPath ([],"Object")
 
@@ -1802,7 +1804,7 @@ let generate_class ctx c =
 					try
 						let f = PMap.find f.cf_name c.cl_fields in
 						if List.mem f.cf_name c.cl_overrides then raise Not_found;
-						f.cf_meta
+						f.cf_meta()
 					with Not_found ->
 						find_meta c
 			in			
