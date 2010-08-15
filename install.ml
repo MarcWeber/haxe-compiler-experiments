@@ -272,7 +272,7 @@ let actions = [
         output_string chan append;
         close_out chan;
       );
-    description= "use ocamake to create a makefile - TODO - verify that everything is build";
+    description= "use ocamake to create a makefile - TODO - verify that everything is build. -shared segfaults here. So maybe remove it and pass path to libz.so in LIBS";
     default= false
   };
   { name= "haxe_make";
