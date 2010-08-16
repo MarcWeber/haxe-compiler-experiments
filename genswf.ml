@@ -433,7 +433,7 @@ let parse_swf com file =
 		| Some swf -> swf
 		| None ->
 			let t = Common.timer "read swf" in
-			let file = (try Common.find_file com file with Not_found -> failwith ("SWF Library not found : " ^ file)) in
+			let file = (try Common.find_file com file with Not_found -> failwith ("SWF Library not found in classpath (-cp) : " ^ file)) in
 			let ch = IO.input_channel (open_in_bin file) in
 			let h, tags = (try Swf.parse ch with _ -> failwith ("The input swf " ^ file ^ " is corrupted")) in
 			IO.close_in ch;
