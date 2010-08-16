@@ -1,6 +1,7 @@
 From: Marc Weber <marco-oweber@gmx.de>
-Subject: [PATCH] t/marc
+Subject: [PATCH] t/improvements
 
-changes for working on source only 
+some improvements:
+- when using -swf-lib and library is not found hint that the classpath is used. Absolute paths don't work
 
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
