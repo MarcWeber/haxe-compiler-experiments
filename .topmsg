@@ -1,7 +1,6 @@
 From: Marc Weber <marco-oweber@gmx.de>
-Subject: [PATCH] t/gitignore
+Subject: [PATCH] t/marc
 
-I'm using git for development.
-So add an ignore file
+changes for working on source only 
 
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
