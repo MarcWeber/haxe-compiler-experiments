@@ -1,7 +1,6 @@
 From: Marc Weber <marco-oweber@gmx.de>
-Subject: [PATCH] t/improvements
+Subject: [PATCH] t/short-lambda1
 
-some improvements:
-- when using -swf-lib and library is not found hint that the classpath is used. Absolute paths don't work
+allow f(x){...} additional to function(x){..}
 
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
