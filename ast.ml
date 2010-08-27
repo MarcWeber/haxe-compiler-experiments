@@ -25,6 +25,7 @@ type pos = {
 
 type keyword =
 	| Function
+	| F (* short version of Function *)
 	| Class
 	| Var
 	| If
@@ -293,6 +294,7 @@ let s_constant = function
 
 let s_keyword = function
 	| Function -> "function"
+	| F -> "function"
 	| Class -> "class"
 	| Static -> "static"
 	| Var -> "var"
