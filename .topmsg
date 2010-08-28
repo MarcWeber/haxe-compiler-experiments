@@ -1,6 +1,29 @@
 From: Marc Weber <marco-oweber@gmx.de>
-Subject: [PATCH] t/short-lambda1
+Subject: [PATCH] t/short-lambda2
 
-allow f(x){...} additional to function(x){..}
+Take this patch with care - I don't know yet what I'm doing.
+
+This patch adds short lambdas to HaXe similar to what can be done in Scala:
+
+var f1 = _1; // same as var a = function(a){ return a; }
+var f2 = _1 + _2; // same as var a = function(a,b){ return a + b; }
+
+etc.
+
+Scala only allows unnamed parameters without index. Thus _ + _ is always treated as _1 + _2.
+However you can'd describe _2 / _1 functions then. That's why I chose to index
+the unnamed parameters.
+
+
+How does a function differ from a simple expression which gets evaluated immediately?
+Only by containing _nr values.
+
+// cases like this wil break by this change:
+
+  var _1 = "foo";
+  var f = _1;
+
+But they are very likely to be caught by the type system of HaXe.
+
 
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
