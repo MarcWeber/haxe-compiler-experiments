@@ -58,6 +58,7 @@ let keywords =
 		Catch;New;This;Throw;Extern;Enum;In;Interface;
 		Cast;Override;Dynamic;Typedef;Package;Callback;
 		Inline;Using];
+        Hashtbl.add h "F" Function;
 	h
 
 let init file =
