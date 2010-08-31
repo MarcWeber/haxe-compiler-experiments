@@ -1,29 +1,84 @@
 From: Marc Weber <marco-oweber@gmx.de>
 Subject: [PATCH] t/short-lambda2
 
-Take this patch with care - I don't know yet what I'm doing.
+patch implementing short lambdas with named arguments which are declared when
+being used
+=============================================================================
 
-This patch adds short lambdas to HaXe similar to what can be done in Scala:
+WARNING: Take this patch with care - I don't know yet what I'm doing 
 
-var f1 = _1; // same as var a = function(a){ return a; }
-var f2 = _1 + _2; // same as var a = function(a,b){ return a + b; }
+This idea started as "I want what Scala has: anonymous parameters".
+In Scala _ + _ is the same as function(a,b){ return a + b; }
+The issue is: You can't encode { return b / a; }.
 
-etc.
+So I want to add indexes. There is still a flaw: You can't nest, because $1 
+would be named $1 in the sub lambda as well.
 
-Scala only allows unnamed parameters without index. Thus _ + _ is always treated as _1 + _2.
-However you can'd describe _2 / _1 functions then. That's why I chose to index
-the unnamed parameters.
+Thus I want to give those anonymous arguments a name - so that they are no
+longer anonymous. The behaviour can be described as
+
+   >> First usage declares the argument <<
+
+Simple examples (all the same)
+
+  // old:
+  list.zip2(list2, function(a,b){ return b / a; })
+
+  // new (empty names):
+  list.zip2(list2, $2 / $1);
+
+  // new (named):
+  list.zip2(list2, $2dividend / $divisor);
 
 
-How does a function differ from a simple expression which gets evaluated immediately?
-Only by containing _nr values.
+Nested example:
 
-// cases like this wil break by this change:
+  // Note how $reply refers to the argument of the outer lambda.
+  obj.send(
+    $reply.send( trace($reply2.toString() + " " + $reply) )
+  );
 
-  var _1 = "foo";
-  var f = _1;
+  // comparison: old HaXe syntax:
+  obj.send(function(reply){
+    reply.send( function(reply2){
+      trace(reply2.toString()+" "+reply);
+    });
+  });
 
-But they are very likely to be caught by the type system of HaXe.
+
+Thoughts about its usage
+=============================================================================
+
+keeping code readable & what if you want to refer to a argument in a nested
+lambda only?
+
+HaXe allows no ops:
+
+  var x = 7;
+  x; // no op
+
+This can be used to fake argument declaration:
+
+  obj.send(
+    $reply;
+    // $reply refers to outer lambda
+    // $reply2 is an argument of the inner lambda:
+    obj.send(trace($reply+$reply2);
+  );
+
+Thus before you start writing:
+  obj.send(
+    [ 200 lines ]
+    trace($reply);
+  );
+
+put the arg first to keep code readable:
+  obj.send(
+    $reply;
+    [ 200 lines ]
+    trace($reply);
+  );
 
 
-Signed-off-by: Marc Weber <marco-oweber@gmx.de>
+I hope that this implementation is at least as readable / useful as what Scala
+/ Perl offer
