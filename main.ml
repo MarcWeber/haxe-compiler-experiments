@@ -316,6 +316,12 @@ try
 			| _ -> ());
 			Common.define com var
 		),"<var> : define a conditional compilation flag");
+		("-dump-ast",Arg.Unit (fun () ->
+			com.dump_ast <- true
+		),": dump ast after parsing");
+		("-dump-tokens",Arg.Unit (fun () ->
+			com.dump_tokens <- true
+		),": dump ast after parsing");
 		("-v",Arg.Unit (fun () ->
 			com.verbose <- true
 		),": turn on verbose mode");

@@ -17,6 +17,7 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 open Ast
+open Common
 
 type error_msg =
 	| Unexpected of token
@@ -789,10 +790,29 @@ let parse ctx code file =
 			Exit -> None
 	) in
 	try
+                let dumpThing p what printAction =
+                  if (p) then (
+                    print_string ("\ndumping " ^ what ^ " of " ^ file ^ "start\n");
+                    printAction();
+                    print_string ("\ndumping " ^ what ^ " of " ^ file ^ "done\n");
+                ) in
+
+                dumpThing ctx.dump_tokens "tokens before parsing" (fun() ->
+                    List.iter (fun tok -> 
+                      let t = fst tok in
+                      if (t != Eof) then
+                        print_string ((Show.show<token> (fst tok)) ^ "\n")
+                    ) (Stream.npeek 99999 s) (* this will always fill with Eofs until 99999 tokens were generated (?) *)
+                );
+
 		let l = parse_file s in
+                dumpThing ctx.dump_ast "ast after parsing" (fun() ->
+                  print_string (Show.show<string list * (Ast.type_def * Ast.pos) list> l);
+                );
 		(match !mstack with [] -> () | p :: _ -> error Unclosed_macro p);
 		cache := old_cache;
 		Lexer.restore old;
+
 		l
 	with
 		| Stream.Error _

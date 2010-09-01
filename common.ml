@@ -77,6 +77,9 @@ type context = {
 	(* typing *)
 	mutable type_api : context_type_api;
 	mutable lines : Lexer.line_index;
+	(* development only *)
+	mutable dump_tokens : bool;
+	mutable dump_ast : bool;
 }
 
 exception Abort of string * Ast.pos
@@ -121,6 +124,8 @@ let create v =
 			load_extern_type = [];
 		};
 		lines = Lexer.build_line_index();
+		dump_ast = false;
+		dump_tokens = false;
 	}
 
 let defined ctx v = PMap.mem v ctx.defines

@@ -133,7 +133,8 @@ let libs = [
         "ocaml/swflib/swflib";
         "ocaml/xml-light/xml-light";
         "unix";
-        "str"
+        "str";
+        "PATH_TO_DERIVING_MLIs" (* should be a configuration option *)
 ]
 let neko = "neko/libs/include/ocaml"
 let paths = [
@@ -214,7 +215,9 @@ let action_build_haxe(cfg) =
 	(* HAXE *)
 	(* Sys.chdir "haxe"; *)
 	command "ocamllex lexer.mll";
-	ocamlc (path_str ^ " -pp camlp4o " ^ modules mlist ".ml") cfg;
+        (* probably the deriving location has to be modified manually by -I or
+         * by giving full path *)
+	ocamlc (path_str ^ " -pp \"camlp4o pa_deriving.cma\" " ^ modules mlist ".ml") cfg;
 	if !bytecode then command ("ocamlc -custom -o bin/haxe-byte" ^ cfg.exe_ext ^ libs_str ".cma" ^ modules mlist ".cmo");
 	if !native then command ("ocamlopt -o bin/haxe" ^ cfg.exe_ext ^ libs_str ".cmxa" ^ modules mlist ".cmx");;
 
@@ -265,7 +268,8 @@ let actions = [
       let append =
           "ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx\n"
         ^ "ocaml_swf_lib = ocaml/swflib/swf.cmx  ocaml/swflib/actionScript.cmx ocaml/swflib/as3code.cmx ocaml/swflib/as3parse.cmx ocaml/swflib/as3hlparse.cmx ocaml/swflib/swfParser.cmx \n"
-        ^ "LIBS := $(LIBS) ocaml/extc/extc.cmxa unix.cmxa str.cmxa ./ocaml/extLib.cmxa ocaml/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) \n"
+        ^ "DERIVING_LIBS = nums.cmxa show.cmx\n"
+        ^ "LIBS := $(LIBS) $(DERIVING_LIBS) ocaml/extc/extc.cmxa unix.cmxa str.cmxa ./ocaml/extLib.cmxa ocaml/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) \n"
         ^ "LFLAGS := -shared $(LFLAGS)\n"
       in
         let chan = open_out_gen [Open_append] 0 "Makefile" in

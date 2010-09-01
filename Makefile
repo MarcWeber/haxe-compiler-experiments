@@ -2,9 +2,9 @@
 # http://tech.motion-twin.com
 .SUFFIXES : .ml .mli .cmo .cmi .cmx .mll .mly
 
-CFLAGS=-c -annot -cclib -fno-stack-protector  -pp camlp4o -I ocaml/extc -I ocaml/xml-light -I ocaml/swflib -I ocaml -I neko/libs/include/ocaml -I .
+CFLAGS=-c -annot -cclib -fno-stack-protector  -pp "camlp4o ~/.nix-profile/lib/pa_deriving.cma" -I ocaml/extc -I ocaml/xml-light -I ocaml/swflib -I ocaml -I neko/libs/include/ocaml -I . -I ~/.nix-profile/lib/lib 
 LIBS=
-LFLAGS= -o bin/haxe -I ocaml/extc -I ocaml/xml-light -I ocaml/swflib -I ocaml -I neko/libs/include/ocaml -I .
+LFLAGS= -o bin/haxe -I ocaml/extc -I ocaml/xml-light -I ocaml/swflib -I ocaml -I neko/libs/include/ocaml -I . -I ~/.nix-profile/lib/lib
 
 all: bin/haxe
 
@@ -80,5 +80,6 @@ wclean:
 
 ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx
 ocaml_swf_lib = ocaml/swflib/swf.cmx  ocaml/swflib/actionScript.cmx ocaml/swflib/as3code.cmx ocaml/swflib/as3parse.cmx ocaml/swflib/as3hlparse.cmx ocaml/swflib/swfParser.cmx 
-LIBS := $(LIBS) /nix/store/hq9rhjaawnvxh4x7cxw4xyjsfpldnkvq-zlib-1.2.5/lib/libz.a ocaml/extc/extc.cmxa unix.cmxa str.cmxa ./ocaml/extLib.cmxa ocaml/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) 
+DERIVING_LIBS = nums.cmxa show.cmx
+LIBS := $(LIBS) $(DERIVING_LIBS) /nix/store/hq9rhjaawnvxh4x7cxw4xyjsfpldnkvq-zlib-1.2.5/lib/libz.a ocaml/extc/extc.cmxa unix.cmxa str.cmxa ./ocaml/extLib.cmxa ocaml/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) 
 LFLAGS := $(LFLAGS)
