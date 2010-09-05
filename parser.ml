@@ -17,6 +17,8 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *)
 open Ast
+open Common
+open Lexer
 
 type error_msg =
 	| Unexpected of token
@@ -655,31 +657,242 @@ and parse_catch etry = parser
 				Display e -> display (ETry (etry,[name,t,e]),p))
 		| [< '(_,p) >] -> error Missing_type p
 
+(* Ast.expr -> (Ast.token * Common.pos) Stream.t -> Ast.expr list *)
 and parse_call_params ec s =
-	let e = (try
-		match s with parser
-		| [< e = expr >] -> Some e
-		| [< >] -> None
-	with Display e ->
-		display (ECall (ec,[e]),pos ec)
-	) in
-	let rec loop acc =
-		try
-			match s with parser
-			| [< '(Comma,_); e = expr >] -> loop (e::acc)
-			| [< >] -> List.rev acc
-		with Display e ->
-			display (ECall (ec,List.rev (e::acc)),pos ec)
-	in
-	match e with
-	| None -> []
-	| Some e -> loop [e]
+    let rec parseAcc (accArgs:expr list) (accBlockElts:expr list) (s: (Ast.token * Common.pos) Stream.t) =
+    let processArg (l:expr list):expr = match l with
+       | [] -> assert false
+       | [x] -> x
+       | l -> (EBlock (List.rev l), pos (List.hd l))
+                in
+      match (Stream.npeek 1 s) with
+        | [(PClose, p)] -> (match (accArgs,accBlockElts) with
+             | ([],[]) -> [] (* proc, no args *)
+             | (_,[]) -> error (Unexpected PClose) p (* missing argument after , before ) *)
+             | _ ->  (List.rev ((processArg accBlockElts)::accArgs)) (* exit accumulation, return args *)
+            )
+        | _ -> (match s with parser
+          (* end argument *)
+          | [< '(Comma,p) >] -> (match accBlockElts with
+              | [] -> error (Unexpected Comma) p
+              | l -> parseAcc ((processArg accBlockElts)::accArgs) [] s
+            )
+          (* end block element within arg such as $1; trace($1) *)
+          | [< '(Semicolon,_) >] -> parseAcc accArgs accBlockElts s
+
+          (* block elements: *)
+          | [< '(Kwd Var,p1); vl = psep Comma parse_var_decl; p2 = semicolon >]
+                -> parseAcc accArgs ((EVars vl,punion p1 p2)::accBlockElts) s
+          | [< e = expr >]
+                -> parseAcc accArgs (e::accBlockElts) s
+        ) in
+    parseAcc [] [] s
 
 and toplevel_expr s =
 	try
 		expr s
 	with
 		Display e -> e
+
+(* start implementation short lambdas : (Marc Weber)
+ 
+  rewriteShortLambdas is called after ast is parsed.
+  It traverses the ast looking for $NRname vars.
+  If found it "goes" up until a
+  - function arg
+  - a var declaration
+  is found (TODO assignment?). That portion of the ast is surrounded by function
+  and a return is added.
+
+
+  rewriteShortLambdas is called after ast is parsed.
+  It traverses the ast looking for $NRname vars.
+  If found it "goes" up until a locating triggering the substitution is reached
+  [1]:
+  - function arg
+  - a var declaration
+  is found (TODO assignment?). That portion of the ast is surrounded by function
+  and a return is added.
+
+    // Examples
+    1) var x = $1 / $2;
+    2) callback( $2 / $1 );
+    3) callback( $1; trace($1); );
+    4) callback( $; trace("callback no argument") );
+
+  those expressions are surrounded by a anonymous function (including a "return"):
+
+    // Example 1, 2  rewritten
+    1) var x = function(dol_1, dol_2){ return dol_1 / dol_2 };
+    2) callback( function(dol_1, dol_2){ return dol_2 / dol_1 );
+    3) callback( function(dol_1){ trace(dol_1); } );
+    4) callback( function(){ trace("callback no argument"); } );
+
+  Pay attention to how the third case uses $1 to force creating the anonymous
+  function around the trace, not inside it.
+
+*)
+
+module ArgSet = Set.Make(
+  struct
+    let compare = Pervasives.compare
+    type t = (int * string)
+  end )
+
+module IntMap = Map.Make (
+  struct
+    let compare = Pervasives.compare
+    type t = int
+  end
+)
+
+let rewriteShortLambdas x =
+
+  let str i s = "dol_" ^ (string_of_int i) ^ s in
+
+  let replaceKnown knownArgs const = match const with
+      | UnnamedA (0,s) -> Ident ("null")
+      | UnnamedA (i,s) ->
+          if ArgSet.mem (i,s) knownArgs then Ident (str i s) else const
+      | x -> x in
+
+  (* rewriteExpression is called at [1] locations. It finds unnamed args and
+   * surroundse the ast by a anonymous function if found. Continues traversing
+   * the ast beyound [1] locations.
+   *)
+  let rec rewriteExpression (e:expr) (knownArgs:ArgSet.t) =
+    let rec fArgs s ((ed,p):expr) =
+      (
+        let foldExpr (l: expr list) = List.fold_left (fun s n -> fArgs s n) s l in
+        let recur ed = fArgs s ed in
+        (match ed with
+          | EConst const -> (match const with
+                            | UnnamedA (i,st) -> ArgSet.add (i,st) s
+                            | _ -> s
+                          )
+          | EArray (e1,e2) -> foldExpr [e1; e2]
+          | EBinop (binop, e1, e2) -> foldExpr [e1; e2];
+          (* | EField of expr * string *)
+          (* | EType of expr * string *)
+          | EParenthesis e -> recur e
+          | EObjectDecl tp_l -> foldExpr (List.map snd tp_l)
+          | EArrayDecl l -> foldExpr l
+          | ECall (e_fun, l_args) -> recur e_fun
+          (* | ENew (t,l) ->  ArgSet.empty *)
+          | EUnop(a,b,e) -> recur e
+	  | EVars l -> foldExpr (List.concat (List.map (fun(v,t,e) -> match e with | Some e -> [e] | _ -> []) l))
+          | EFunction f -> recur f.f_expr
+          | EBlock l ->  foldExpr l
+          | EFor (i,e1,e2) -> foldExpr [e1; e2]
+          | EIf (cond,e_if, o_else_opt) ->
+              foldExpr ([cond; e_if] @ (match o_else_opt with | None -> [] | Some e -> [e]))
+          | EWhile (cond,e,flag) -> foldExpr [ cond; e ]
+          | ESwitch (e, cases, def) -> foldExpr ((match def with Some e -> [e] | _ -> [])
+                                                 @(List.map  (fun (tp) -> (snd tp) ) cases ))
+          | ETry (e_body, l) -> foldExpr ( e_body :: List.map (fun  (n, t, e_catch) ->  e_catch ) l)
+          (* | EReturn of expr option *)
+          (* | EBreak *)
+          (* | EContinue *)
+          (* | EUntyped of expr *)
+          (* | EThrow of expr *)
+          (* | ECast of expr * type_path option *)
+          (* | EDisplay of expr * bool *)
+          (* | EDisplayNew of type_path_normal *)
+          (* | ETernary of expr * expr * expr *)
+          | _ -> s
+        )
+      ) in
+    let found = ArgSet.diff (fArgs ArgSet.empty e) knownArgs in
+      if (ArgSet.is_empty found) then
+        findMagicLocations e knownArgs
+      else
+        (* wrap by function *)
+        let min = ArgSet.fold (fun e min -> let x = fst e in if x < min then x else min ) found 99 in
+        (* make sure that if a $ is found that no $1 $2 are substituted causing
+         * a failure *)
+        let use = if min = 0 then ArgSet.singleton (0, unnamed_arg_proc_name) else found in
+        let max = ArgSet.fold (fun e max -> let x = fst e in if x > max then x else max ) use 0 in
+        let intmap = ArgSet.fold (fun e map -> IntMap.add (fst e) (snd e) map ) use IntMap.empty in
+        (* batteries contais -- range function - use it? *)
+        let rec range i j = if i > j then [] else i :: (range (i+1) j) in
+        let all_known = ArgSet.union knownArgs use in
+        let args = if min = 0 then []
+                   else List.map (fun (arg_num) ->
+                          let n = if IntMap.mem arg_num intmap then IntMap.find arg_num intmap
+                                  else ""  in
+                          let name = str arg_num n in
+                          (name, false, None, None)
+                        ) (range min max) in
+         let e_rewritten = findMagicLocations e all_known in
+         let p = snd e in
+         (EFunction {f_args = args; f_type = None; f_expr = (EReturn (Some e_rewritten), p) }, p)
+
+  (*  traverses ast until [1] is found thereby replacing known unnamed arguments.
+   *  Calls rewriteExpression then. *)
+  and findMagicLocations ((ed,p):expr) (knownArgs:ArgSet.t): expr =
+    let recur (exp:expr) = findMagicLocations exp knownArgs in
+    let rewr (exp:expr) = rewriteExpression exp knownArgs; in
+    let rewriteArgs l = List.map (fun (e) -> rewr e  ) l in
+    let r = match ed with
+	| EConst c -> EConst (replaceKnown knownArgs c)
+	| EArray (e1,e2) -> EArray(recur e1, recur e2)
+	| EBinop (binop, e1, e2) -> EBinop (binop, recur e1, recur e2)
+	(* | EField of expr * string *)
+	(* EType of expr * string *)
+	| EParenthesis e -> EParenthesis (recur e)
+	| EObjectDecl mappings -> EObjectDecl (List.map( fun(a,b) -> (a, recur b) ) mappings)
+	| EArrayDecl l -> EArrayDecl (List.map recur l)
+	| ECall (e_fun, l_args) -> ECall(recur e_fun, rewriteArgs l_args)
+	| ENew (t,l) -> ENew(t, rewriteArgs l)
+	| EUnop(a,b,e) -> EUnop(a,b,recur e)
+	| EVars l -> EVars (List.map (fun(v,t,e) ->
+                      (v,t, match e with | Some e -> Some (rewr e) | _ -> None )) l)
+	| EFunction f -> EFunction (rewriteFunction f)
+	| EBlock l -> EBlock (List.map recur l)
+	| EFor (i,e1,e2) -> EFor(i, recur e1, recur e2)
+	| EIf (cond,e_if, o_else_opt) ->
+              EIf( recur cond, recur e_if,
+                  match o_else_opt with | Some e -> Some (recur e) | _ -> None)
+	| EWhile (cond,e,flag) -> EWhile(recur cond, recur e, flag)
+	| ESwitch (e,cases,def) ->
+              ESwitch ( recur e,
+                        List.map (fun (tp) -> (fst tp, recur (snd tp) )) cases,
+                        match def with Some e -> Some (recur e) | _ -> None )
+        | ETry (e_body, l) -> ETry ( recur e_body, List.map (fun  (n, t, e_catch) ->  (n, t, recur e_catch )) l)
+	| EReturn e_opt -> EReturn (match e_opt with
+                            | Some e -> Some (recur e)
+                            | _ -> None)
+	(* | EBreak *)
+	(* | EContinue *)
+	(* | EUntyped of expr *)
+	(* | EThrow of expr *)
+	(* | ECast of expr * type_path option *)
+	(* | EDisplay of expr * bool *)
+	(* | EDisplayNew of type_path_normal *)
+	(* | ETernary of expr * expr * expr *)
+        | _ -> ed in
+    (r, p)
+
+  and rewriteFunction (f:func): func = { f with f_expr = findMagicLocations f.f_expr ArgSet.empty } in
+
+  let rewriteClassFields (ed,p) =
+    let r = match ed with
+        | FVar (name,doc,meta,access,t,e_opt) ->
+            (match e_opt with
+              | Some e -> (FVar (name,doc,meta,access,t,Some (rewriteExpression e ArgSet.empty)))
+              | _ -> FVar (name,doc,meta,access,t,e_opt))
+        | FFun (name,doc,meta,access,params,f) -> FFun (name,doc,meta,access,params,rewriteFunction f)
+	| FProp _ -> ed in
+    (r, p) in
+
+  let rewriteTypeDefs td = match (fst td) with
+	| EClass def -> (EClass { def with d_data = List.map rewriteClassFields def.d_data }, snd td)
+	| x -> td in
+
+  List.map rewriteTypeDefs x
+
+(* end implementation short lambdas *)
+
 
 let parse ctx code file =
 	let old = Lexer.save() in
@@ -793,7 +1006,7 @@ let parse ctx code file =
 		(match !mstack with [] -> () | p :: _ -> error Unclosed_macro p);
 		cache := old_cache;
 		Lexer.restore old;
-		l
+		(fst l, rewriteShortLambdas (snd l))
 	with
 		| Stream.Error _
 		| Stream.Failure ->
