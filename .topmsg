@@ -45,6 +45,16 @@ Nested example:
     });
   });
 
+sometimes you have to declare a anonymous argument:
+
+  callback( $1; trace($1) );
+
+which is equal to
+  callback( function(x){trace(x);} );
+
+Example: callback which does not take any arguments:
+
+callback($; trace("I was called"); ); // special var $ triggers no arguments
 
 Thoughts about its usage
 =============================================================================
