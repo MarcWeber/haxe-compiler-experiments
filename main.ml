@@ -117,6 +117,7 @@ let rec read_type_path com p =
 			(try
 				match PMap.find x com.package_rules with
 				| Directory d -> d :: l
+				| Remap s -> s :: l
 				| _ -> p
 			with
 				Not_found -> p)
@@ -225,7 +226,7 @@ try
 	let no_output = ref false in
 	let did_something = ref false in
 	let pre_compilation = ref [] in
-	let root_packages = ["neko"; "flash"; "flash9"; "js"; "php"; "cpp"] in
+	let interp = ref false in
 	Common.define com ("haxe_" ^ string_of_int version);
 	com.warning <- message;
 	com.error <- (fun msg p ->
@@ -258,13 +259,10 @@ try
 				let base_path = normalize_path (try executable_path() with _ -> "./") in
 				com.class_path <- [base_path ^ "std/";"";"/"]);
 	com.std_path <- List.filter (fun p -> ExtString.String.ends_with p "std/" || ExtString.String.ends_with p "std\\") com.class_path;
-	let set_platform pf name file =
+	let set_platform pf file =
 		if com.platform <> Cross then failwith "Multiple targets";
-		com.platform <- pf;
+		Common.init_platform com pf;
 		com.file <- file;
-		let forbid acc p = if p = name || PMap.mem p acc then acc else PMap.add p Forbidden acc in
-		com.package_rules <- List.fold_left forbid com.package_rules root_packages;
-		Common.define com name; (* define platform name *)
 		Unix.putenv "__file__" file;
 		Unix.putenv "__platform__" file;
 		if (pf = Flash || pf = Flash9) && file_extension file = "swc" then Common.define com "swc";
@@ -274,26 +272,26 @@ try
 		("-cp",Arg.String (fun path ->
 			com.class_path <- normalize_path path :: com.class_path
 		),"<path> : add a directory to find source files");
-		("-js",Arg.String (set_platform Js "js"),"<file> : compile code to JavaScript file");
-		("-swf",Arg.String (set_platform Flash "flash"),"<file> : compile code to Flash SWF file");
+		("-js",Arg.String (set_platform Js),"<file> : compile code to JavaScript file");
+		("-swf",Arg.String (set_platform Flash),"<file> : compile code to Flash SWF file");
 		("-swf9",Arg.String (fun file ->
-			set_platform Flash "flash" file;
+			set_platform Flash file;
 			if com.flash_version < 9 then com.flash_version <- 9;
 		),"<file> : compile code to Flash9 SWF file");
 		("-as3",Arg.String (fun dir ->
-			set_platform Flash "flash" dir;
+			set_platform Flash dir;
 			if com.flash_version < 9 then com.flash_version <- 9;
 			gen_as3 := true;
 			Common.define com "as3";
 			Common.define com "no_inline";
 		),"<directory> : generate AS3 code into target directory");
-		("-neko",Arg.String (set_platform Neko "neko"),"<file> : compile code to Neko Binary");
+		("-neko",Arg.String (set_platform Neko),"<file> : compile code to Neko Binary");
 		("-php",Arg.String (fun dir ->
 			classes := (["php"],"Boot") :: !classes;
-			set_platform Php "php" dir;
+			set_platform Php dir;
 		),"<directory> : generate PHP code into target directory");
 		("-cpp",Arg.String (fun dir ->
-			set_platform Cpp "cpp" dir;
+			set_platform Cpp dir;
 		),"<directory> : generate C++ code into target directory");
 		("-xml",Arg.String (fun file ->
 			Parser.use_doc := true;
@@ -353,7 +351,7 @@ try
 		),"<file> : add the SWF library to the compiled SWF");
 		("-x", Arg.String (fun file ->
 			let neko_file = file ^ ".n" in
-			set_platform Neko "neko" neko_file;
+			set_platform Neko neko_file;
 			if com.main_class = None then begin
 				let cpath = make_path file in
 				com.main_class <- Some cpath;
@@ -443,6 +441,12 @@ try
 			let pack, target = (try ExtString.String.split s ":" with _ -> raise (Arg.Bad "Invalid format")) in
 			com.package_rules <- PMap.add pack (Remap target) com.package_rules;
 		),"<package:target> : remap a package to another one");
+		("--interp", Arg.Unit (fun() ->
+			Common.define com "macro";
+			set_platform Neko "";
+			no_output := true;
+			interp := true;
+		),": interpret the program using internal macro system");
 	] in
 	let current = ref 0 in
 	let args = Array.of_list ("" :: params) in
@@ -495,7 +499,7 @@ try
 	let ext = (match com.platform with
 		| Cross ->
 			(* no platform selected *)
-			set_platform Cross "cross" "";
+			set_platform Cross "";
 			"?"
 		| Flash | Flash9 ->
 			Common.define com ("flash" ^ string_of_int com.flash_version);
@@ -545,7 +549,10 @@ try
 		if Common.defined com "dump" then Codegen.dump_types com;
 		(match com.platform with
 		| Cross ->
-			()
+			if !interp then begin
+				let ctx = Interp.create com in
+				Interp.add_types ctx com.types;
+			end;
 		| Flash | Flash9 when !gen_as3 ->
 			if com.verbose then print_endline ("Generating AS3 in : " ^ com.file);
 			Genas3.generate com;
@@ -585,6 +592,10 @@ with
 	| Lexer.Error (m,p) -> report (Lexer.error_msg m) p
 	| Parser.Error (m,p) -> report (Parser.error_msg m) p
 	| Typecore.Error (m,p) -> report (Typecore.error_msg m) p
+	| Interp.Error (msg,p :: l) ->
+		store_message msg p;
+		List.iter (store_message "Called from") l;
+		report "Aborted" Ast.null_pos;
 	| Failure msg | Arg.Bad msg -> report ("Error : " ^ msg) Ast.null_pos
 	| Arg.Help msg -> print_string msg
 	| Hxml_found -> ()

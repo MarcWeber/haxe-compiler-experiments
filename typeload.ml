@@ -23,6 +23,10 @@ open Typecore
 
 let do_create = ref (fun com -> assert false)
 
+(* make sure we don't access metadata at load time *)
+let has_meta m (ml:Ast.metadata) =
+	List.exists (fun(m2,_) -> m = m2) ml
+
 let type_constant ctx c p =
 	match c with
 	| Int s ->
@@ -147,7 +151,7 @@ let rec load_instance ctx t p allow_no_params =
 						) c.cl_implements;
 						t
 					) in
-					ctx.delays := [(fun () -> ignore(!r()))] :: !(ctx.delays);
+					delay ctx (fun () -> ignore(!r()));
 					TLazy r
 				| _ -> assert false
 			) tparams types in
@@ -158,10 +162,10 @@ let rec load_instance ctx t p allow_no_params =
 *)
 and load_complex_type ctx p t =
 	match t with
-	| TPParent t -> load_complex_type ctx p t
-	| TPNormal t -> load_instance ctx t p false
-	| TPExtend (t,l) ->
-		(match load_complex_type ctx p (TPAnonymous l) with
+	| CTParent t -> load_complex_type ctx p t
+	| CTPath t -> load_instance ctx t p false
+	| CTExtend (t,l) ->
+		(match load_complex_type ctx p (CTAnonymous l) with
 		| TAnon a ->
 			let rec loop t =
 				match follow t with
@@ -191,33 +195,32 @@ and load_complex_type ctx p t =
 			in
 			loop (load_instance ctx t p false)
 		| _ -> assert false)
-	| TPAnonymous l ->
+	| CTAnonymous l ->
 		let rec loop acc (n,pub,f,p) =
 			if PMap.mem n acc then error ("Duplicate field declaration : " ^ n) p;
-			let t , get, set = (match f with
+			let t , access = (match f with
 				| AFVar t ->
-					load_complex_type ctx p t, NormalAccess, NormalAccess
+					load_complex_type ctx p t, Var { v_read = AccNormal; v_write = AccNormal }
 				| AFFun (tl,t) ->
 					let t = load_complex_type ctx p t in
 					let args = List.map (fun (name,o,t) -> name , o, load_complex_type ctx p t) tl in
-					TFun (args,t), NormalAccess, MethodAccess false
+					TFun (args,t), Method MethNormal
 				| AFProp (t,i1,i2) ->
 					let access m get =
 						match m with
-						| "null" -> NoAccess
-						| "never" -> NeverAccess
-						| "default" -> NormalAccess
-						| "dynamic" -> CallAccess ((if get then "get_"  else "set_") ^ n)
-						| _ -> CallAccess m
+						| "null" -> AccNo
+						| "never" -> AccNever
+						| "default" -> AccNormal
+						| "dynamic" -> AccCall ((if get then "get_"  else "set_") ^ n)
+						| _ -> AccCall m
 					in
-					load_complex_type ctx p t, access i1 true, access i2 false
+					load_complex_type ctx p t, Var { v_read = access i1 true; v_write = access i2 false }
 			) in
 			PMap.add n {
 				cf_name = n;
 				cf_type = t;
 				cf_public = (match pub with None -> true | Some p -> p);
-				cf_get = get;
-				cf_set = set;
+				cf_kind = access;
 				cf_params = [];
 				cf_expr = None;
 				cf_doc = None;
@@ -225,9 +228,9 @@ and load_complex_type ctx p t =
 			} acc
 		in
 		mk_anon (List.fold_left loop PMap.empty l)
-	| TPFunction (args,r) ->
+	| CTFunction (args,r) ->
 		match args with
-		| [TPNormal { tpackage = []; tparams = []; tname = "Void" }] ->
+		| [CTPath { tpackage = []; tparams = []; tname = "Void" }] ->
 			TFun ([],load_complex_type ctx p r)
 		| _ ->
 			TFun (List.map (fun t -> "",false,load_complex_type ctx p t) args,load_complex_type ctx p r)
@@ -235,7 +238,7 @@ and load_complex_type ctx p t =
 let hide_types ctx =
 	let old_locals = ctx.local_types in
 	let old_type_params = ctx.type_params in
-	ctx.local_types <- ctx.std.mtypes;
+	ctx.local_types <- ctx.g.std.mtypes;
 	ctx.type_params <- [];
 	(fun() ->
 		ctx.local_types <- old_locals;
@@ -312,9 +315,9 @@ let check_overriding ctx c p () =
 					display_error ctx ("Field " ^ i ^ " should be declared with 'override' since it is inherited from superclass") p
 				else if f.cf_public <> f2.cf_public then
 					display_error ctx ("Field " ^ i ^ " has different visibility (public/private) than superclass one") p
-				else if f2.cf_get = InlineAccess then
+				else if f2.cf_kind = Method MethInline then
 					display_error ctx ("Field " ^ i ^ " is inlined and cannot be overridden") p
-				else if f2.cf_get <> f.cf_get || f2.cf_set <> f.cf_set then
+				else if f2.cf_kind <> f.cf_kind then
 					display_error ctx ("Field " ^ i ^ " has different property access than in superclass") p
 				else try
 					let t = apply_params csup.cl_types params t in
@@ -349,10 +352,8 @@ let rec check_interface ctx c p intf params =
 			let p = (match f2.cf_expr with None -> p | Some e -> e.epos) in
 			if f.cf_public && not f2.cf_public then
 				display_error ctx ("Field " ^ i ^ " should be public as requested by " ^ s_type_path intf.cl_path) p
-			else if not (unify_access f2.cf_get f.cf_get) then
-				display_error ctx ("Field " ^ i ^ " has different property access than in " ^ s_type_path intf.cl_path ^ " (" ^ s_access f2.cf_get ^ " should be " ^ s_access f.cf_get ^ ")") p
-			else if not (unify_access f2.cf_set f.cf_set) then
-				display_error ctx ("Field " ^ i ^ " has different property access than in " ^ s_type_path intf.cl_path ^ " (" ^ s_access f2.cf_set ^ " should be " ^ s_access f.cf_set ^ ")") p
+			else if not (unify_kind f2.cf_kind f.cf_kind) then
+				display_error ctx ("Field " ^ i ^ " has different property access than in " ^ s_type_path intf.cl_path ^ " (" ^ s_kind f2.cf_kind ^ " should be " ^ s_kind f.cf_kind ^ ")") p
 			else try
 				valid_redefinition ctx f2 t2 f (apply_params intf.cl_types params f.cf_type)
 			with
@@ -425,7 +426,7 @@ let set_heritance ctx c herits p =
 				if is_parent c cl then error "Recursive class" p;
 				if c.cl_interface then error "Cannot extend an interface" p;
 				if cl.cl_interface then error "Cannot extend by using an interface" p;
-				if has_meta ":final" cl.cl_meta && not (has_meta ":hack" c.cl_meta) then error "Cannot extend a final class" p;
+				if Type.has_meta ":final" cl.cl_meta && not (Type.has_meta ":hack" c.cl_meta) then error "Cannot extend a final class" p;
 				c.cl_super <- Some (cl,params)
 			| _ -> error "Should extend by using a class" p)
 		| HImplements t ->
@@ -475,7 +476,7 @@ let type_type_params ctx path p (n,flags) =
 			set_heritance ctx c (List.map (fun t -> HImplements t) flags) p;
 			t
 		) in
-		ctx.delays := [(fun () -> ignore(!r()))] :: !(ctx.delays);
+		delay ctx (fun () -> ignore(!r()));
 		n, TLazy r
 
 let type_function ctx args ret static constr f p =
@@ -565,16 +566,16 @@ let type_meta ctx meta =
 			ml
 		| Some ml -> ml
 	in
-	ctx.delays := [[fun() -> ignore(get_meta())]] @ !(ctx.delays);
+	delay ctx (fun() -> ignore(get_meta()));
 	get_meta
 
 let init_core_api ctx c =
-	let ctx2 = (match !(ctx.core_api) with
+	let ctx2 = (match ctx.g.core_api with
 		| None ->
-			let com = ctx.com in
-			let com = { com with class_path = com.std_path; type_api = { com.type_api with tvoid = com.type_api.tvoid } } in
-			let ctx2 = (!do_create) com in
-			ctx.core_api := Some ctx2;
+			let com2 = Common.clone ctx.com in
+			com2.class_path <- ctx.com.std_path;
+			let ctx2 = (!do_create) com2 in
+			ctx.g.core_api <- Some ctx2;
 			ctx2
 		| Some c ->
 			c
@@ -599,10 +600,9 @@ let init_core_api ctx c =
 				(match f2.cf_doc with
 				| None -> f2.cf_doc <- f.cf_doc
 				| Some _ -> ());
-				if f2.cf_get <> f.cf_get || f2.cf_set <> f.cf_set then begin
-					match f2.cf_get, f.cf_get, f2.cf_set, f.cf_set with
-					| InlineAccess, NormalAccess, NeverAccess, MethodAccess false -> () (* allow to add 'inline' *)
-					| NormalAccess, InlineAccess, MethodAccess false, NeverAccess -> () (* allow to remove 'inline' - only during transition ? *)
+				if f2.cf_kind <> f.cf_kind then begin
+					match f2.cf_kind, f.cf_kind with
+					| Method MethInline, Method MethNormal -> () (* allow to add 'inline' *)
 					| _ ->
 						error ("Field " ^ i ^ " has different property access than core type") p;
 				end;
@@ -623,13 +623,19 @@ let init_core_api ctx c =
 		check_fields ccore.cl_statics c.cl_statics;
 	| _ -> assert false
 
-let init_class ctx c p herits fields =
+let init_class ctx c p herits fields meta =
 	ctx.type_params <- c.cl_types;
 	c.cl_extern <- List.mem HExtern herits;
 	c.cl_interface <- List.mem HInterface herits;
 	set_heritance ctx c herits p;
-	let core_api = has_meta ":core_api" c.cl_meta in
-	if core_api then ctx.delays := [(fun() -> init_core_api ctx c)] :: !(ctx.delays);
+	let core_api = has_meta ":core_api" meta in
+	let is_macro = has_meta ":macro" meta in
+	let in_macro = Common.defined ctx.com "macro" in
+	let fields, herits = if is_macro && not in_macro then begin
+		c.cl_extern <- true;
+		List.filter (function (FFun (_,_,_,acc,_,_),_) -> List.mem AStatic acc | _ -> false) fields, []
+	end else fields, herits in
+	if core_api then delay ctx ((fun() -> init_core_api ctx c));
 	let tthis = TInst (c,List.map snd c.cl_types) in
 	let rec extends_public c =
 		List.exists (fun (c,_) -> c.cl_path = (["haxe"],"Public") || extends_public c) c.cl_implements ||
@@ -696,8 +702,7 @@ let init_class ctx c p herits fields =
 				cf_doc = doc;
 				cf_meta = type_meta ctx meta;
 				cf_type = t;
-				cf_get = if inline then InlineAccess else NormalAccess;
-				cf_set = if inline then NeverAccess else NormalAccess;
+				cf_kind = Var (if inline then { v_read = AccInline ; v_write = AccNever } else { v_read = AccNormal; v_write = AccNormal });
 				cf_expr = None;
 				cf_public = is_public access None;
 				cf_params = [];
@@ -726,8 +731,18 @@ let init_class ctx c p herits fields =
 			let stat = List.mem AStatic access in
 			let inline = List.mem AInline access in
 			if inline && c.cl_interface then error "You can't declare inline methods in interfaces" p;
+			let is_macro = (is_macro && stat) || has_meta ":macro" meta in
+			if is_macro && not stat then error "Only static methods can be macros" p;
+			let f = if not is_macro then f else begin
+				let texpr = CTPath { tpackage = ["haxe";"macro"]; tname = "Expr"; tparams = []; tsub = None } in
+				{ f with 
+					f_args = List.map (fun (a,o,t,e) -> a,o,(match t with None -> Some texpr | _ -> t),e) f.f_args;
+					f_expr = if in_macro then f.f_expr else (EReturn (Some (EConst (Ident "null"),p)),p);
+				}
+			end in
 			let parent = (if not stat then get_parent c name else None) in
-			let dynamic = List.mem ADynamic access || (match parent with Some { cf_set = MethodAccess true } -> true | _ -> false) in
+			let dynamic = List.mem ADynamic access || (match parent with Some { cf_kind = Method MethDynamic } -> true | _ -> false) in
+			if inline && dynamic then error "You can't have both 'inline' and 'dynamic'" p;
 			let ctx = { ctx with
 				curclass = c;
 				curmethod = name;
@@ -744,7 +759,7 @@ let init_class ctx c p herits fields =
 			if constr && c.cl_interface then error "An interface cannot have a constructor" p;
 			if c.cl_interface && not stat && (match f.f_expr with EBlock [] , _ -> false | _ -> true) then error "An interface method cannot have a body" p;
 			if constr then (match f.f_type with
-				| None | Some (TPNormal { tpackage = []; tname = "Void" }) -> ()
+				| None | Some (CTPath { tpackage = []; tname = "Void" }) -> ()
 				| _ -> error "A class constructor can't have a return value" p
 			);
 			let cf = {
@@ -752,8 +767,7 @@ let init_class ctx c p herits fields =
 				cf_doc = doc;
 				cf_meta = type_meta ctx meta;
 				cf_type = t;
-				cf_get = if inline then InlineAccess else NormalAccess;
-				cf_set = (if inline then NeverAccess else MethodAccess dynamic);
+				cf_kind = Method (if is_macro then MethMacro else if inline then MethInline else if dynamic then MethDynamic else MethNormal);
 				cf_expr = None;
 				cf_public = is_public access parent;
 				cf_params = params;
@@ -796,35 +810,34 @@ let init_class ctx c p herits fields =
 					| Not_found -> if not c.cl_interface then error ("Method " ^ m ^ " required by property " ^ name ^ " is missing") p
 			in
 			let get = (match get with
-				| "null" -> NoAccess
-				| "dynamic" -> CallAccess ("get_" ^ name)
-				| "never" -> NeverAccess
-				| "default" -> NormalAccess
+				| "null" -> AccNo
+				| "dynamic" -> AccCall ("get_" ^ name)
+				| "never" -> AccNever
+				| "default" -> AccNormal
 				| _ ->
 					check_get := check_method get (TFun ([],ret));
-					CallAccess get
+					AccCall get
 			) in
 			let set = (match set with
 				| "null" ->
 					(* standard flash library read-only variables can't be accessed for writing, even in subclasses *)
 					if c.cl_extern && (match c.cl_path with "flash" :: _  , _ -> true | _ -> false) && Common.defined ctx.com "flash9" then
-						NeverAccess
+						AccNever
 					else
-						NoAccess
-				| "never" -> NeverAccess
-				| "dynamic" -> CallAccess ("set_" ^ name)
-				| "default" -> NormalAccess
+						AccNo
+				| "never" -> AccNever
+				| "dynamic" -> AccCall ("set_" ^ name)
+				| "default" -> AccNormal
 				| _ ->
 					check_set := check_method set (TFun (["",false,ret],ret));
-					CallAccess set
+					AccCall set
 			) in
-			if set = NormalAccess && (match get with CallAccess _ -> true | _ -> false) then error "Unsupported property combination" p;
+			if set = AccNormal && (match get with AccCall _ -> true | _ -> false) then error "Unsupported property combination" p;
 			let cf = {
 				cf_name = name;
 				cf_doc = doc;
 				cf_meta = type_meta ctx meta;
-				cf_get = get;
-				cf_set = set;
+				cf_kind = Var { v_read = get; v_write = set };
 				cf_expr = None;
 				cf_type = ret;
 				cf_public = is_public access None;
@@ -863,7 +876,7 @@ let init_class ctx c p herits fields =
 	*)
 	let rec define_constructor ctx c =
 		try
-			Some (Hashtbl.find ctx.constructs c.cl_path)
+			Some (Hashtbl.find ctx.g.constructs c.cl_path)
 		with Not_found ->
 			match c.cl_super with
 			| None -> None
@@ -885,11 +898,11 @@ let init_class ctx c p herits fields =
 							if we have a package declaration, we are sure it's fully qualified
 						*)
 						let rec is_qualified = function
-							| TPNormal t -> is_qual_name t
-							| TPParent t -> is_qualified t
-							| TPFunction (tl,t) -> List.for_all is_qualified tl && is_qualified t
-							| TPAnonymous fl -> List.for_all (fun (_,_,f,_) -> is_qual_field f) fl
-							| TPExtend (t,fl) -> is_qual_name t && List.for_all (fun (_,_,f,_) -> is_qual_field f) fl
+							| CTPath t -> is_qual_name t
+							| CTParent t -> is_qualified t
+							| CTFunction (tl,t) -> List.for_all is_qualified tl && is_qualified t
+							| CTAnonymous fl -> List.for_all (fun (_,_,f,_) -> is_qual_field f) fl
+							| CTExtend (t,fl) -> is_qual_name t && List.for_all (fun (_,_,f,_) -> is_qual_field f) fl
 						and is_qual_field = function
 							| AFVar t -> is_qualified t
 							| AFProp (t,_,_) -> is_qualified t
@@ -910,8 +923,8 @@ let init_class ctx c p herits fields =
 					) f.f_args } in
 					let _, _, cf, delayed = loop_cf (FFun ("new",None,[],acc,pl,fnew)) p in
 					c.cl_constructor <- Some cf;
-					Hashtbl.add ctx.constructs c.cl_path (acc,pl,f);
-					ctx.delays := [delayed] :: !(ctx.delays);
+					Hashtbl.add ctx.g.constructs c.cl_path (acc,pl,f);
+					delay ctx delayed;
 					infos
 	in
 	(*
@@ -936,12 +949,12 @@ let type_module ctx m tdecls loadp =
 		let tpath = if priv then (fst m @ ["_" ^ snd m], name) else (fst m, name) in
 		if priv && List.exists (fun t -> tpath = t_path t) (!decls) then error ("Type name " ^ name ^ " is already defined in this module") p;
 		try
-			let m2 = Hashtbl.find ctx.types_module tpath in
+			let m2 = Hashtbl.find ctx.g.types_module tpath in
 			if m <> m2 && String.lowercase (s_type_path m2) = String.lowercase (s_type_path m) then error ("Module " ^ s_type_path m2 ^ " is loaded with a different case than " ^ s_type_path m) loadp;
 			error ("Type name " ^ s_type_path tpath ^ " is redefined from module " ^ s_type_path m2) p
 		with
 			Not_found ->
-				Hashtbl.add ctx.types_module tpath m;
+				Hashtbl.add ctx.g.types_module tpath m;
 				tpath
 	in
 	List.iter (fun (d,p) ->
@@ -957,7 +970,7 @@ let type_module ctx m tdecls loadp =
 			(* store the constructor for later usage *)
 			List.iter (fun (cf,_) ->
 				match cf with
-				| FFun ("new",_,_,acc,pl,f) -> Hashtbl.add ctx.constructs path (acc,pl,f)
+				| FFun ("new",_,_,acc,pl,f) -> Hashtbl.add ctx.g.constructs path (acc,pl,f)
 				| _ -> ()
 			) d.d_data;
 			decls := TClassDecl c :: !decls
@@ -994,35 +1007,29 @@ let type_module ctx m tdecls loadp =
 		mpath = m;
 		mtypes = List.rev !decls;
 	} in
-	Hashtbl.add ctx.modules m.mpath m;
+	Hashtbl.add ctx.g.modules m.mpath m;
 	(* PASS 2 : build types structure - does not type any expression ! *)
 	let ctx = {
 		com = ctx.com;
+		g = ctx.g;
 		api = ctx.api;
-		core_api = ctx.core_api;
-		modules = ctx.modules;
-		delays = ctx.delays;
-		constructs = ctx.constructs;
-		types_module = ctx.types_module;
 		curclass = ctx.curclass;
 		tthis = ctx.tthis;
-		std = ctx.std;
 		ret = ctx.ret;
-		doinline = ctx.doinline;
 		current = m;
 		locals = PMap.empty;
 		locals_map = PMap.empty;
 		locals_map_inv = PMap.empty;
-		local_types = ctx.std.mtypes @ m.mtypes;
+		local_types = ctx.g.std.mtypes @ m.mtypes;
 		local_using = [];
 		type_params = [];
 		curmethod = "";
-		super_call = false;
+		untyped = false;
+		in_super_call = false;
 		in_constructor = false;
 		in_static = false;
 		in_display = false;
 		in_loop = false;
-		untyped = false;
 		opened = [];
 		param_type = None;
 	} in
@@ -1077,7 +1084,7 @@ let type_module ctx m tdecls loadp =
 				ctx.local_using<- ctx.local_using @ [resolve_typedef ctx t])
 		| EClass d ->
 			let c = get_class d.d_name in
-			delays := !delays @ check_overriding ctx c p :: check_interfaces ctx c p :: init_class ctx c p d.d_flags d.d_data
+			delays := !delays @ check_overriding ctx c p :: check_interfaces ctx c p :: init_class ctx c p d.d_flags d.d_data d.d_meta
 		| EEnum d ->
 			let e = get_enum d.d_name in
 			ctx.type_params <- e.e_types;
@@ -1122,7 +1129,7 @@ let type_module ctx m tdecls loadp =
 			| _ -> assert false);
 	) tdecls;
 	(* PASS 3 : type checking, delayed until all modules and types are built *)
-	ctx.delays := !delays :: !(ctx.delays);
+	List.iter (delay ctx) (List.rev (!delays));
 	m
 
 let parse_module ctx m p =
@@ -1164,12 +1171,12 @@ let parse_module ctx m p =
 					d_meta = [];
 					d_params = d.d_params;
 					d_flags = if priv then [EPrivate] else [];
-					d_data = TPNormal (if priv then { tpackage = []; tname = "Dynamic"; tparams = []; tsub = None; } else
+					d_data = CTPath (if priv then { tpackage = []; tname = "Dynamic"; tparams = []; tsub = None; } else
 						{
 							tpackage = !remap;
 							tname = d.d_name;
 							tparams = List.map (fun (s,_) ->
-								TPType (TPNormal { tpackage = []; tname = s; tparams = []; tsub = None; })
+								TPType (CTPath { tpackage = []; tname = s; tparams = []; tsub = None; })
 							) d.d_params;
 							tsub = None;
 						});
@@ -1186,7 +1193,7 @@ let parse_module ctx m p =
 
 let load_module ctx m p =
 	try
-		Hashtbl.find ctx.modules m
+		Hashtbl.find ctx.g.modules m
 	with
 		Not_found ->
 			let decls = (try
