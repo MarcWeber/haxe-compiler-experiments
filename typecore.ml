@@ -19,19 +19,23 @@
 open Common
 open Type
 
-type typer = {
+type typer_globals = {
+	types_module : (path, path) Hashtbl.t;
+	modules : (path , module_def) Hashtbl.t;
+	mutable delayed : (unit -> unit) list;
+	constructs : (path , Ast.access list * Ast.type_param list * Ast.func) Hashtbl.t;
+	doinline : bool;
+	mutable core_api : typer option;
+	mutable macros : ((unit -> unit) * typer) option;
+	mutable std : module_def;
+	mutable hook_generate : (unit -> unit) list;
+}
+
+and typer = {
 	(* shared *)
 	com : context;
 	mutable api : context_type_api;
-	types_module : (path, path) Hashtbl.t;
-	modules : (path , module_def) Hashtbl.t;
-	delays : (unit -> unit) list list ref;
-	constructs : (path , Ast.access list * Ast.type_param list * Ast.func) Hashtbl.t;
-	doinline : bool;
-	mutable core_api : typer option ref;
-	mutable std : module_def;
-	mutable untyped : bool;
-	mutable super_call : bool;
+	g : typer_globals;
 	(* per-module *)
 	current : module_def;
 	mutable local_types : module_type list;
@@ -42,6 +46,8 @@ type typer = {
 	mutable type_params : (string * t) list;
 	(* per-function *)
 	mutable curmethod : string;
+	mutable untyped : bool;
+	mutable in_super_call : bool;
 	mutable in_constructor : bool;
 	mutable in_static : bool;
 	mutable in_loop : bool;
@@ -78,8 +84,19 @@ let unify_error_msg ctx = function
 		s_type ctx t ^ " has no field " ^ n
 	| Has_extra_field (t,n) ->
 		s_type ctx t ^ " has extra field " ^ n
-	| Invalid_access (f,get,a,b) ->
-		"Inconsistent " ^ (if get then "getter" else "setter") ^ " for field " ^ f ^ " : " ^ s_access a ^ " should be " ^ s_access b
+	| Invalid_kind (f,a,b) ->
+		(match a, b with
+		| Var va, Var vb ->
+			let name, stra, strb = if va.v_read = vb.v_read then
+				"setter", s_access va.v_write, s_access vb.v_write
+			else if va.v_write = vb.v_write then
+				"getter", s_access va.v_read, s_access vb.v_read
+			else
+				"access", "(" ^ s_access va.v_read ^ "," ^ s_access va.v_write ^ ")", "(" ^ s_access vb.v_read ^ "," ^ s_access vb.v_write ^ ")"
+			in
+			"Inconsistent " ^ name ^ " for field " ^ f ^ " : " ^ stra ^ " should be " ^ strb
+		| _ ->
+			"Field " ^ f ^ " is " ^ s_kind a ^ " but should be " ^ s_kind b)
 	| Invalid_visibility n ->
 		"The field " ^ n ^ " is not public"
 	| Not_matching_optional n ->
@@ -199,14 +216,16 @@ let rec is_null = function
 let not_opened = ref Closed
 let mk_anon fl = TAnon { a_fields = fl; a_status = not_opened; }
 
+let delay ctx f =
+	ctx.g.delayed <- f :: ctx.g.delayed
+
 let mk_field name t = {
 	cf_name = name;
 	cf_type = t;
 	cf_doc = None;
 	cf_meta = no_meta;
 	cf_public = true;
-	cf_get = NormalAccess;
-	cf_set = NormalAccess;
+	cf_kind = Var { v_read = AccNormal; v_write = AccNormal };
 	cf_expr = None;
 	cf_params = [];
 }

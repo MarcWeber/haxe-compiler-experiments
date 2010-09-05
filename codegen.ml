@@ -71,10 +71,10 @@ let extend_remoting ctx c t p async prot =
 	let decls = (try Typeload.parse_module ctx path p with e -> ctx.com.package_rules <- rules; raise e) in
 	ctx.com.package_rules <- rules;
 	let base_fields = [
-		(FVar ("__cnx",None,[],[],Some (TPNormal { tpackage = ["haxe";"remoting"]; tname = if async then "AsyncConnection" else "Connection"; tparams = []; tsub = None }),None),p);
+		(FVar ("__cnx",None,[],[],Some (CTPath { tpackage = ["haxe";"remoting"]; tname = if async then "AsyncConnection" else "Connection"; tparams = []; tsub = None }),None),p);
 		(FFun ("new",None,[],[APublic],[],{ f_args = ["c",false,None,None]; f_type = None; f_expr = (EBinop (OpAssign,(EConst (Ident "__cnx"),p),(EConst (Ident "c"),p)),p) }),p);
 	] in
-	let tvoid = TPNormal { tpackage = []; tname = "Void"; tparams = []; tsub = None } in
+	let tvoid = CTPath { tpackage = []; tname = "Void"; tparams = []; tsub = None } in
 	let build_field is_public acc (f,p) =
 		match f with
 		| FFun ("new",_,_,_,_,_) ->
@@ -82,9 +82,9 @@ let extend_remoting ctx c t p async prot =
 		| FFun (name,doc,meta,acl,pl,f) when (is_public || List.mem APublic acl) && not (List.mem AStatic acl) ->
 			if List.exists (fun (_,_,t,_) -> t = None) f.f_args then error ("Field " ^ name ^ " type is not complete and cannot be used by RemotingProxy") p;
 			let eargs = [EArrayDecl (List.map (fun (a,_,_,_) -> (EConst (Ident a),p)) f.f_args),p] in
-			let ftype = (match f.f_type with Some (TPNormal { tpackage = []; tname = "Void" }) -> None | _ -> f.f_type) in
+			let ftype = (match f.f_type with Some (CTPath { tpackage = []; tname = "Void" }) -> None | _ -> f.f_type) in
 			let fargs, eargs = if async then match ftype with
-				| Some tret -> f.f_args @ ["__callb",true,Some (TPFunction ([tret],tvoid)),None], eargs @ [EConst (Ident "__callb"),p]
+				| Some tret -> f.f_args @ ["__callb",true,Some (CTFunction ([tret],tvoid)),None], eargs @ [EConst (Ident "__callb"),p]
 				| _ -> f.f_args, eargs @ [EConst (Ident "null"),p]
 			else
 				f.f_args, eargs
@@ -154,14 +154,14 @@ let rec build_generic ctx c p tl =
 	else try
 		Typeload.load_instance ctx { tpackage = pack; tname = name; tparams = []; tsub = None } p false
 	with Error(Module_not_found path,_) when path = (pack,name) ->
-		let m = (try Hashtbl.find ctx.modules (Hashtbl.find ctx.types_module c.cl_path) with Not_found -> assert false) in
+		let m = (try Hashtbl.find ctx.g.modules (Hashtbl.find ctx.g.types_module c.cl_path) with Not_found -> assert false) in
 		let ctx = { ctx with local_types = m.mtypes @ ctx.local_types } in
 		let cg = mk_class (pack,name) c.cl_pos in
 		let mg = {
 			mpath = cg.cl_path;
 			mtypes = [TClassDecl cg];
 		} in
-		Hashtbl.add ctx.modules mg.mpath mg;
+		Hashtbl.add ctx.g.modules mg.mpath mg;
 		let rec loop l1 l2 =
 			match l1, l2 with
 			| [] , [] -> []
@@ -219,14 +219,13 @@ let extend_xml_proxy ctx c t file p =
 	let t = Typeload.load_complex_type ctx p t in
 	let file = (try Common.find_file ctx.com file with Not_found -> file) in
 	let used = ref PMap.empty in
-	let rec delay() =
-		if !(ctx.delays) <> [] then ctx.delays := !(ctx.delays) @ [[delay]]
-		else PMap.iter (fun id used ->
+	let print_results() =
+		PMap.iter (fun id used ->
 			if not used then ctx.com.warning (id ^ " is not used") p;
 		) (!used)
 	in
 	let check_used = Common.defined ctx.com "check-xml-proxy" in
-	if check_used then delay();
+	if check_used then ctx.g.hook_generate <- print_results :: ctx.g.hook_generate;
 	try
 		let rec loop = function
 			| Xml.Element (_,attrs,childs) ->
@@ -244,8 +243,7 @@ let extend_xml_proxy ctx c t file p =
 						cf_public = true;
 						cf_doc = None;
 						cf_meta = no_meta;
-						cf_get = ResolveAccess;
-						cf_set = NoAccess;
+						cf_kind = Var { v_read = AccResolve; v_write = AccNo };
 						cf_params = [];
 						cf_expr = None;
 					} in
@@ -312,7 +310,7 @@ let build_instance ctx mtype p =
 					unify_raise ctx (build_generic ctx c p pl) t p;
 					t
 				) in
-				ctx.delays := [fun() -> ignore ((!r)())] :: !(ctx.delays);
+				delay ctx (fun() -> ignore ((!r)()));
 				TLazy r
 			| _ ->
 				TInst (c,pl)
@@ -325,13 +323,13 @@ let build_instance ctx mtype p =
 
 let on_inherit ctx c p h =
 	match h with
-	| HExtends { tpackage = ["haxe";"remoting"]; tname = "Proxy"; tparams = [TPType(TPNormal t)] } ->
+	| HExtends { tpackage = ["haxe";"remoting"]; tname = "Proxy"; tparams = [TPType(CTPath t)] } ->
 		extend_remoting ctx c t p false true;
 		false
-	| HExtends { tpackage = ["haxe";"remoting"]; tname = "AsyncProxy"; tparams = [TPType(TPNormal t)] } ->
+	| HExtends { tpackage = ["haxe";"remoting"]; tname = "AsyncProxy"; tparams = [TPType(CTPath t)] } ->
 		extend_remoting ctx c t p true true;
 		false
-	| HExtends { tpackage = ["mt"]; tname = "AsyncProxy"; tparams = [TPType(TPNormal t)] } ->
+	| HExtends { tpackage = ["mt"]; tname = "AsyncProxy"; tparams = [TPType(CTPath t)] } ->
 		extend_remoting ctx c t p true false;
 		false
 	| HImplements { tpackage = ["haxe";"rtti"]; tname = "Generic"; tparams = [] } ->
@@ -368,6 +366,13 @@ let on_generate ctx t =
 			c.cl_ordered_statics <- f :: c.cl_ordered_statics;
 			c.cl_statics <- PMap.add f.cf_name f c.cl_statics;
 		end;
+		if not (Common.defined ctx.com "macro") then List.iter (fun f ->
+			match f.cf_kind with
+			| Method MethMacro -> 
+				c.cl_statics <- PMap.remove f.cf_name c.cl_statics;
+				c.cl_ordered_statics <- List.filter (fun f2 -> f != f2) c.cl_ordered_statics;
+			| _ -> ()
+		) c.cl_ordered_statics;
 		(match build_metadata ctx.com t with
 		| None -> ()
 		| Some e -> 
@@ -927,8 +932,8 @@ let fix_overrides com t =
 	match com.platform, t with
 	| Flash9, TClassDecl c ->
 		c.cl_ordered_fields <- List.map (fun f ->
-			match f.cf_expr with
-			| Some { eexpr = TFunction fd } when f.cf_set <> NormalAccess && f.cf_set <> MethodAccess true ->
+			match f.cf_expr, f.cf_kind with
+			| Some { eexpr = TFunction fd }, Method (MethNormal | MethInline) ->
 				fix_override c f fd
 			| _ ->
 				f
@@ -1060,7 +1065,7 @@ let dump_types com =
 		| Type.TClassDecl c ->
 			let print_field stat f =
 				print "\t%s%s%s%s" (if stat then "static " else "") (if f.cf_public then "public " else "") f.cf_name (params f.cf_params);
-				print "(%s,%s) : %s" (s_access f.cf_get) (s_access f.cf_set) (s_type f.cf_type);
+				print "(%s) : %s" (s_kind f.cf_kind) (s_type f.cf_type);
 				(match f.cf_expr with
 				| None -> ()
 				| Some e -> print "\n\n\t = %s" (Type.s_expr s_type e));
