@@ -18,10 +18,7 @@
  *)
 open Ast
 open Common
-<<<<<<< HEAD
-=======
 open Lexer
->>>>>>> refs/top-bases/t/dump-tokens-and-ast
 
 type error_msg =
 	| Unexpected of token
