@@ -239,11 +239,11 @@ type class_flag =
 	| HInterface
 	| HExtern
 	| HPrivate
-	| HExtends of type_path_normal
-	| HImplements of type_path_normal
+	| HExtends of type_path
+	| HImplements of type_path
   deriving (Show)
 
-type enum_constructor = string * documentation * metadata * (string * bool * type_path) list * pos
+type enum_constructor = string * documentation * metadata * (string * bool * complex_type) list * pos
   deriving (Show)
 
 type ('a,'b) definition = {
