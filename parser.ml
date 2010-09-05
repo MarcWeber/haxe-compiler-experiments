@@ -657,9 +657,16 @@ and parse_catch etry = parser
 				Display e -> display (ETry (etry,[name,t,e]),p))
 		| [< '(_,p) >] -> error Missing_type p
 
-(* Ast.expr -> (Ast.token * Common.pos) Stream.t -> Ast.expr list *)
 and parse_call_params ec s =
     let rec parseAcc (accArgs:expr list) (accBlockElts:expr list) (s: (Ast.token * Common.pos) Stream.t) =
+    let expectCommaSemiEnd continuation s =
+      match (Stream.npeek 1 s) with
+        | [(PClose, _)] -> continuation s
+        | [(Comma, _)] -> continuation s
+        | [(Semicolon, _)] -> continuation s
+        | [(t, p)] -> error (Unexpected t) p
+        | [] -> assert false in
+
     let processArg (l:expr list):expr = match l with
        | [] -> assert false
        | [x] -> x
@@ -682,9 +689,9 @@ and parse_call_params ec s =
 
           (* block elements: *)
           | [< '(Kwd Var,p1); vl = psep Comma parse_var_decl; p2 = semicolon >]
-                -> parseAcc accArgs ((EVars vl,punion p1 p2)::accBlockElts) s
+                -> expectCommaSemiEnd (parseAcc accArgs ((EVars vl,punion p1 p2)::accBlockElts)) s
           | [< e = expr >]
-                -> parseAcc accArgs (e::accBlockElts) s
+                -> expectCommaSemiEnd (parseAcc accArgs (e::accBlockElts)) s
         ) in
     parseAcc [] [] s
 
