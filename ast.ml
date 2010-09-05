@@ -134,7 +134,7 @@ type while_flag =
 	| NormalWhile
 	| DoWhile
 
-type type_path_normal = {
+type type_path = {
 	tpackage : string list;
 	tname : string;
 	tparams : type_param_or_const list;
@@ -142,24 +142,24 @@ type type_path_normal = {
 }
 
 and type_param_or_const =
-	| TPType of type_path
+	| TPType of complex_type
 	| TPConst of constant
 
 and anonymous_field =
-	| AFVar of type_path
-	| AFProp of type_path * string * string
-	| AFFun of (string * bool * type_path) list * type_path
+	| AFVar of complex_type
+	| AFProp of complex_type * string * string
+	| AFFun of (string * bool * complex_type) list * complex_type
 
-and type_path =
-	| TPNormal of type_path_normal
-	| TPFunction of type_path list * type_path
-	| TPAnonymous of (string * bool option * anonymous_field * pos) list
-	| TPParent of type_path
-	| TPExtend of type_path_normal * (string * bool option * anonymous_field * pos) list
+and complex_type =
+	| CTPath of type_path
+	| CTFunction of complex_type list * complex_type
+	| CTAnonymous of (string * bool option * anonymous_field * pos) list
+	| CTParent of complex_type
+	| CTExtend of type_path * (string * bool option * anonymous_field * pos) list
 
 type func = {
-	f_args : (string * bool * type_path option * expr option) list;
-	f_type : type_path option;
+	f_args : (string * bool * complex_type option * expr option) list;
+	f_type : complex_type option;
 	f_expr : expr;
 }
 
@@ -173,29 +173,29 @@ and expr_def =
 	| EObjectDecl of (string * expr) list
 	| EArrayDecl of expr list
 	| ECall of expr * expr list
-	| ENew of type_path_normal * expr list
+	| ENew of type_path * expr list
 	| EUnop of unop * unop_flag * expr
-	| EVars of (string * type_path option * expr option) list
+	| EVars of (string * complex_type option * expr option) list
 	| EFunction of func
 	| EBlock of expr list
 	| EFor of string * expr * expr
 	| EIf of expr * expr * expr option
 	| EWhile of expr * expr * while_flag
 	| ESwitch of expr * (expr list * expr) list * expr option
-	| ETry of expr * (string * type_path * expr) list
+	| ETry of expr * (string * complex_type * expr) list
 	| EReturn of expr option
 	| EBreak
 	| EContinue
 	| EUntyped of expr
 	| EThrow of expr
-	| ECast of expr * type_path option
+	| ECast of expr * complex_type option
 	| EDisplay of expr * bool
-	| EDisplayNew of type_path_normal
+	| EDisplayNew of type_path
 	| ETernary of expr * expr * expr
 
 and expr = expr_def * pos
 
-type type_param = string * type_path_normal list
+type type_param = string * type_path list
 
 type documentation = string option
 
@@ -210,9 +210,9 @@ type access =
 	| AInline
 
 type class_field =
-	| FVar of string * documentation * metadata * access list * type_path option * expr option
+	| FVar of string * documentation * metadata * access list * complex_type option * expr option
 	| FFun of string * documentation * metadata * access list * type_param list * func
-	| FProp of string * documentation * metadata * access list * string * string * type_path
+	| FProp of string * documentation * metadata * access list * string * string * complex_type
 
 type enum_flag =
 	| EPrivate
@@ -222,10 +222,10 @@ type class_flag =
 	| HInterface
 	| HExtern
 	| HPrivate
-	| HExtends of type_path_normal
-	| HImplements of type_path_normal
+	| HExtends of type_path
+	| HImplements of type_path
 
-type enum_constructor = string * documentation * metadata * (string * bool * type_path) list * pos
+type enum_constructor = string * documentation * metadata * (string * bool * complex_type) list * pos
 
 type ('a,'b) definition = {
 	d_name : string;
@@ -239,9 +239,9 @@ type ('a,'b) definition = {
 type type_def =
 	| EClass of (class_flag, (class_field * pos) list) definition
 	| EEnum of (enum_flag, enum_constructor list) definition
-	| ETypedef of (enum_flag, type_path) definition
-	| EImport of type_path_normal
-	| EUsing of type_path_normal
+	| ETypedef of (enum_flag, complex_type) definition
+	| EImport of type_path
+	| EUsing of type_path
 
 type type_decl = type_def * pos
 
