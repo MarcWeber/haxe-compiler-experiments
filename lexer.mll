@@ -61,6 +61,8 @@ let keywords =
         Hashtbl.add h "F" Function;
 	h
 
+let unnamed_arg_proc_name = "marker creating lambda returning void"
+
 let init file =
 	cur_file := file;
 	cur_line := 1;
@@ -170,19 +172,6 @@ and token = parse
 	| [' ' '\t']+ { token lexbuf }
 	| "\r\n" { newline lexbuf; token lexbuf }
 	| '\n' | '\r' { newline lexbuf; token lexbuf }
-        | "$" ['2'-'9'] ident {
-		let s = (lexeme lexbuf) in
-		let l = String.length s in
-		let nr = (int_of_string (String.sub s 1 1)) in
-		let name = String.sub s 2 (l-2) in
-		mk lexbuf (UnnamedA (nr, name))
-	}
-        | "$" ident {
-		let s = (lexeme lexbuf) in
-		let l = String.length s in
-		let name = String.sub s 1 (l-1) in
-		mk lexbuf (UnnamedA (1, name))
-	}
 	| "0x" ['0'-'9' 'a'-'f' 'A'-'F']+ { mk lexbuf (Const (Int (lexeme lexbuf))) }
 	| ['0'-'9']+ { mk lexbuf (Const (Int (lexeme lexbuf))) }
 	| ['0'-'9']+ '.' ['0'-'9']+ { mk lexbuf (Const (Float (lexeme lexbuf))) }
@@ -278,6 +267,14 @@ and token = parse
 		}
 	| ident { mk_ident lexbuf }
 	| idtype { mk lexbuf (Const (Type (lexeme lexbuf))) }
+        | "$" ['1'-'9'] (ident?) {
+		let s = (lexeme lexbuf) in
+		let l = String.length s in
+		let nr = (int_of_string (String.sub s 1 1)) in
+		let name = String.sub s 2 (l-2) in
+		mk lexbuf (Const (UnnamedA (nr, name)))
+	}
+        | "$" { mk lexbuf (Const (UnnamedA (0, unnamed_arg_proc_name))) }
 	| _ { invalid_char lexbuf }
 
 and comment = parse

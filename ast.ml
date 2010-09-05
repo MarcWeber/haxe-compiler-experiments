@@ -103,17 +103,13 @@ type constant =
 	| Float of string
 	| String of string
 	| Ident of string
+	| UnnamedA of int * string (* unnamed argument for very short lamdas such as in $1 + $2named: *)
 	| Type of string
 	| Regexp of string * string
   deriving (Show)
 
 type token =
 	| Eof
-          (* unnamed argument for very short lamdas such as in _1 + _2
-           * Sometimse you want to nest it, thus __1 ___1 is allowed as well
-           * obj.send( _1.send( __1.add(_1) );
-           *)
-        | UnnamedA of int * string
 	| Const of constant
 	| Kwd of keyword
 	| Comment of string
@@ -315,6 +311,7 @@ let s_constant = function
 	| Float s -> s
 	| String s -> "\"" ^ s_escape s ^ "\""
 	| Ident s -> s
+	| UnnamedA (i,s) -> "\"$" ^ (string_of_int i) ^ s_escape s ^ "\""
 	| Type s -> s
 	| Regexp (r,o) -> "~/" ^ r ^ "/"
 
@@ -391,7 +388,6 @@ let s_unop = function
 
 let s_token = function
 	| Eof -> "<end of file>"
-        | UnnamedA (nr, name) -> "$" ^ (string_of_int nr) ^ name
 	| Const c -> s_constant c
 	| Kwd k -> s_keyword k
 	| Comment s -> "/*"^s^"*/"
