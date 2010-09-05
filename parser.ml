@@ -665,7 +665,7 @@ and parse_call_params ec s =
         | [(Comma, _)] -> continuation s
         | [(Semicolon, _)] -> continuation s
         | [(t, p)] -> error (Unexpected t) p
-        | [] -> assert false in
+        | _ -> assert false in
 
     let processArg (l:expr list):expr = match l with
        | [] -> assert false
