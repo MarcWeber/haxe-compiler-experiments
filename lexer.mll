@@ -58,7 +58,7 @@ let keywords =
 		Catch;New;This;Throw;Extern;Enum;In;Interface;
 		Cast;Override;Dynamic;Typedef;Package;Callback;
 		Inline;Using];
-        Hashtbl.add h "F" Function;
+	Hashtbl.add h "F" Function;
 	h
 
 let unnamed_arg_proc_name = "marker creating lambda returning void"
