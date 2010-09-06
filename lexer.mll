@@ -58,7 +58,7 @@ let keywords =
 		Catch;New;This;Throw;Extern;Enum;In;Interface;
 		Cast;Override;Dynamic;Typedef;Package;Callback;
 		Inline;Using];
-        Hashtbl.add h "F" Function;
+	Hashtbl.add h "F" Function;
 	h
 
 let unnamed_arg_proc_name = "marker creating lambda returning void"
@@ -267,14 +267,14 @@ and token = parse
 		}
 	| ident { mk_ident lexbuf }
 	| idtype { mk lexbuf (Const (Type (lexeme lexbuf))) }
-        | "$" ['1'-'9'] (ident?) {
+	| "$" ['1'-'9'] (ident?) {
 		let s = (lexeme lexbuf) in
 		let l = String.length s in
 		let nr = (int_of_string (String.sub s 1 1)) in
 		let name = String.sub s 2 (l-2) in
 		mk lexbuf (Const (UnnamedA (nr, name)))
 	}
-        | "$" { mk lexbuf (Const (UnnamedA (0, unnamed_arg_proc_name))) }
+	| "$" { mk lexbuf (Const (UnnamedA (0, unnamed_arg_proc_name))) }
 	| _ { invalid_char lexbuf }
 
 and comment = parse

@@ -40,7 +40,7 @@ let type_constant ctx c p =
 	| Ident "true" -> mk (TConst (TBool true)) ctx.api.tbool p
 	| Ident "false" -> mk (TConst (TBool false)) ctx.api.tbool p
 	| Ident "null" -> mk (TConst TNull) (ctx.api.tnull (mk_mono())) p
-        | UnnamedA (i,s) -> failwith ("unnamed arg found: $" ^ (string_of_int i) ^ s) (* TODO add pos *)
+	| UnnamedA (i,s) -> failwith ("unnamed arg found: $" ^ (string_of_int i) ^ s) (* TODO add pos *)
 	| _ -> assert false
 
 let type_function_param ctx t e opt p =
