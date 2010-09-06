@@ -521,7 +521,7 @@ and parse_var_decl = parser
 		| [< >] -> (name,t,None)
 
 and expr = parser
-	| [< '(BrOpen,p1); b = block1; '(BrClose,p2); s >] ->
+	| [< '(BrOpen,p1); b = block1 p1; '(BrClose,p2); s >] ->
 		let e = (b,punion p1 p2) in
 		(match b with
 		| EObjectDecl _ -> expr_next e s

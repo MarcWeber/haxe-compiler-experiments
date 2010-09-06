@@ -9,4 +9,9 @@ class A {
     CURSOR
   }
 
+implementation details: HaXe is told there was a this. even if there isn't.
+When completing in static function you either get an error
+(this. can't be used in static context, eg trace(CURSOR )
+or the list is empty.
+
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
