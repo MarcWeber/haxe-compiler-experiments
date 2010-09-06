@@ -18,6 +18,35 @@
  *)
 open Ast
 
+(* This file contains almost only a hand written parser by Nicolas Canasse
+ * it defines an LL(1) grammar which is implemented using Camlp4 token streams.
+ *
+ * The LL top down parsing implementation has been choosen because its easier to
+ * deal with.
+ *
+ * Yet the HaXe grammar contains some ambiguities such as command lists and
+ * objects:
+ *   function(){{ key     : value }; }
+ *   function(){{ command1; command2 }; }
+ * This disambiguation is done after parsing key/ command in the parser
+ * functions block1  block2
+ *
+ * parse_nset continues parsing such an element after the first token was
+ * taken off the stream
+ *
+ * The parser has two modes:
+ * a) don't allow parse errors (used when compiling)
+ * b) a skip till next function on error recovery which is used when completing
+ *
+ * Example: parse_class_field (which skips everything until it finds the next class top
+ * level declaration)
+ *
+ * The completion context is propagated by throwing a Display Exception
+ *
+ * TODO: This file contains some types such as TypePath which cause dependencies
+ * among modules slowing incremental compilation down unnecessarily
+ *)
+
 type error_msg =
 	| Unexpected of token
 	| Duplicate_default
@@ -443,11 +472,15 @@ and parse_class_herit = parser
 	| [< '(Kwd Extends,_); t = parse_type_path >] -> HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
+(* first step in parsing
+ *   { objkey  : .. } or
+ *   { command ;  ..} *)
 and block1 = parser
 	| [< '(Const (Ident name),p); s >] -> block2 name true p s
 	| [< '(Const (Type name),p); s >] -> block2 name false p s
 	| [< b = block [] >] -> EBlock b
 
+(* second step *)
 and block2 name ident p = parser
 	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
 	| [< e = expr_next (EConst (if ident then Ident name else Type name),p); s >] ->
@@ -585,6 +618,10 @@ and expr = parser
 	| [< '(IntInterval i,p1); e2 = expr >] -> make_binop OpInterval (EConst (Int i),p1) e2
 	| [< '(Kwd Untyped,p1); e = expr >] -> (EUntyped e,punion p1 (pos e))
 
+(* some constructs require look ahead of a token. Example:
+ * distinguish { obj_key: name } from { cmd1; cmd2 }
+ * expr_next continues parsing after lookahead has been shifted from the stream
+ *)
 and expr_next e1 = parser
 	| [< '(Dot,p); s >] ->
 		if is_resuming p then display (EDisplay (e1,false),p);
