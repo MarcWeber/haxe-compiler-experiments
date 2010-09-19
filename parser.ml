@@ -850,8 +850,6 @@ let rewriteShortLambdas x =
 	| EObjectDecl mappings -> EObjectDecl (List.map( fun(a,b) -> (a, recur b) ) mappings)
 	| EArrayDecl l -> EArrayDecl (List.map recur l)
 	| ECall (e_fun, l_args) ->
-            print_string ("rewriting ECall args " ^ Show.show<pos> (snd e_fun) ^ ArgSet.fold (fun elt  str ->
-              str ^ (Show.show<int * string> elt) ) knownArgs "" ^ "\n");
             ECall(recur e_fun, List.map recur (rewriteArgs l_args) )
 	| ENew (t,l) -> ENew(t, rewriteArgs l)
 	| EUnop(a,b,e) -> EUnop(a,b,recur e)

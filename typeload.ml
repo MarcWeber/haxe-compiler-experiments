@@ -32,12 +32,12 @@ let type_constant ctx c p =
 		(try
 			mk (TConst (TInt (Int32.of_string s))) ctx.t.tint p
 		with
-			_ -> mk (TConst (TFloat s)) ctx.api.tfloat p)
-	| Float f -> mk (TConst (TFloat f)) ctx.api.tfloat p
-	| String s -> mk (TConst (TString s)) ctx.api.tstring p
-	| Ident "true" -> mk (TConst (TBool true)) ctx.api.tbool p
-	| Ident "false" -> mk (TConst (TBool false)) ctx.api.tbool p
-	| Ident "null" -> mk (TConst TNull) (ctx.api.tnull (mk_mono())) p
+			_ -> mk (TConst (TFloat s)) ctx.t.tfloat p)
+	| Float f -> mk (TConst (TFloat f)) ctx.t.tfloat p
+	| String s -> mk (TConst (TString s)) ctx.t.tstring p
+	| Ident "true" -> mk (TConst (TBool true)) ctx.t.tbool p
+	| Ident "false" -> mk (TConst (TBool false)) ctx.t.tbool p
+	| Ident "null" -> mk (TConst TNull) (ctx.t.tnull (mk_mono())) p
 	| UnnamedA (i,s) -> failwith ("unnamed arg found: $" ^ (string_of_int i) ^ s) (* TODO add pos *)
 	| _ -> assert false
 
