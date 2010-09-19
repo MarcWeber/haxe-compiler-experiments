@@ -688,8 +688,8 @@ and parse_call_params ec s =
 		| [< '(Semicolon,_) >] -> parseAcc accArgs accBlockElts s
 
 		(* block elements: *)
-		| [< '(Kwd Var,p1); vl = psep Comma parse_var_decl; p2 = semicolon >]
-			-> expectCommaSemiEnd (parseAcc accArgs ((EVars vl,punion p1 p2)::accBlockElts)) s
+		| [< '(Kwd Var,p1); vl = psep Comma parse_var_decl; >]
+			-> expectCommaSemiEnd (parseAcc accArgs ((EVars vl,p1)::accBlockElts)) s
 		| [< e = expr >]
 			-> expectCommaSemiEnd (parseAcc accArgs (e::accBlockElts)) s
 	) in
@@ -779,7 +779,7 @@ let rewriteShortLambdas x =
 													)
 					| EArray (e1,e2) -> foldExpr [e1; e2]
 					| EBinop (binop, e1, e2) -> foldExpr [e1; e2];
-					(* | EField of expr * string *)
+					| EField (e,s) -> recur e
 					(* | EType of expr * string *)
 					| EParenthesis e -> recur e
 					| EObjectDecl tp_l -> foldExpr (List.map snd tp_l)
@@ -844,7 +844,7 @@ let rewriteShortLambdas x =
 	| EConst c -> EConst (replaceKnown knownArgs c)
 	| EArray (e1,e2) -> EArray(recur e1, recur e2)
 	| EBinop (binop, e1, e2) -> EBinop (binop, recur e1, recur e2)
-	(* | EField of expr * string *)
+	| EField (e,s) -> EField (recur e, s)
 	(* EType of expr * string *)
 	| EParenthesis e -> EParenthesis (recur e)
 	| EObjectDecl mappings -> EObjectDecl (List.map( fun(a,b) -> (a, recur b) ) mappings)
