@@ -795,7 +795,7 @@ let rewriteShortLambdas x =
 							foldExpr ([cond; e_if] @ (match o_else_opt with | None -> [] | Some e -> [e]))
 					| EWhile (cond,e,flag) -> foldExpr [ cond; e ]
 					| ESwitch (e, cases, def) -> foldExpr ((match def with Some e -> [e] | _ -> [])
-																								 @(List.map  (fun (tp) -> (snd tp) ) cases ))
+                                                                               @(List.map  (fun (tp) -> (snd tp) ) cases ))
 					| ETry (e_body, l) -> foldExpr ( e_body :: List.map (fun	(n, t, e_catch) ->	e_catch ) l)
 					(* | EReturn of expr option *)
 					(* | EBreak *)
@@ -824,12 +824,12 @@ let rewriteShortLambdas x =
 				let rec range i j = if i > j then [] else i :: (range (i+1) j) in
 				let all_known = ArgSet.union knownArgs use in
 				let args = if min = 0 then []
-									 else List.map (fun (arg_num) ->
-													let n = if IntMap.mem arg_num intmap then IntMap.find arg_num intmap
-																	else ""  in
-													let name = str arg_num n in
-													(name, false, None, None)
-												) (range min max) in
+                                                       else List.map (fun (arg_num) ->
+                                                                            let n = if IntMap.mem arg_num intmap then IntMap.find arg_num intmap
+                                                                                    else ""  in
+                                                                            let name = str arg_num n in
+                                                                            (name, false, None, None)
+                                                                    ) (range min max) in
 				 let e_rewritten = findMagicLocations e all_known in
 				 let p = snd e in
 				 (EFunction {f_args = args; f_type = None; f_expr = (EReturn (Some e_rewritten), p) }, p)
@@ -849,26 +849,29 @@ let rewriteShortLambdas x =
 	| EParenthesis e -> EParenthesis (recur e)
 	| EObjectDecl mappings -> EObjectDecl (List.map( fun(a,b) -> (a, recur b) ) mappings)
 	| EArrayDecl l -> EArrayDecl (List.map recur l)
-	| ECall (e_fun, l_args) -> ECall(recur e_fun, rewriteArgs l_args)
+	| ECall (e_fun, l_args) ->
+            print_string ("rewriting ECall args " ^ Show.show<pos> (snd e_fun) ^ ArgSet.fold (fun elt  str ->
+              str ^ (Show.show<int * string> elt) ) knownArgs "" ^ "\n");
+            ECall(recur e_fun, List.map recur (rewriteArgs l_args) )
 	| ENew (t,l) -> ENew(t, rewriteArgs l)
 	| EUnop(a,b,e) -> EUnop(a,b,recur e)
 	| EVars l -> EVars (List.map (fun(v,t,e) ->
-											(v,t, match e with | Some e -> Some (rewr e) | _ -> None )) l)
+                                    (v,t, match e with | Some e -> Some (rewr e) | _ -> None )) l)
 	| EFunction f -> EFunction (rewriteFunction f)
 	| EBlock l -> EBlock (List.map recur l)
 	| EFor (i,e1,e2) -> EFor(i, recur e1, recur e2)
 	| EIf (cond,e_if, o_else_opt) ->
-							EIf( recur cond, recur e_if,
-									match o_else_opt with | Some e -> Some (recur e) | _ -> None)
+                                  EIf( recur cond, recur e_if,
+                                      match o_else_opt with | Some e -> Some (recur e) | _ -> None)
 	| EWhile (cond,e,flag) -> EWhile(recur cond, recur e, flag)
 	| ESwitch (e,cases,def) ->
-							ESwitch ( recur e,
-												List.map (fun (tp) -> (fst tp, recur (snd tp) )) cases,
-												match def with Some e -> Some (recur e) | _ -> None )
-				| ETry (e_body, l) -> ETry ( recur e_body, List.map (fun	(n, t, e_catch) ->	(n, t, recur e_catch )) l)
+                                ESwitch ( recur e,
+                                          List.map (fun (tp) -> (fst tp, recur (snd tp) )) cases,
+                                          match def with Some e -> Some (recur e) | _ -> None )
+				| ETry (e_body, l) -> ETry ( recur e_body, List.map (fun (n, t, e_catch) -> (n, t, recur e_catch )) l)
 	| EReturn e_opt -> EReturn (match e_opt with
-														| Some e -> Some (recur e)
-														| _ -> None)
+                                      | Some e -> Some (recur e)
+                                      | _ -> None)
 	(* | EBreak *)
 	(* | EContinue *)
 	(* | EUntyped of expr *)
