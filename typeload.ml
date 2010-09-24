@@ -118,7 +118,12 @@ let rec load_instance ctx t p allow_no_params =
 		if allow_no_params && t.tparams = [] then
 			f (List.map (fun (name,t) ->
 				match follow t with
-				| TInst (c,_) -> if c.cl_implements = [] then mk_mono() else error ("Type parameter " ^ name ^ " need constraint") p
+				| TInst (c,_) ->
+					let t = mk_mono() in
+					if c.cl_implements <> [] then delay ctx (fun() -> 
+						List.iter (fun (i,tl) -> unify ctx t (TInst(i,tl)) p) c.cl_implements
+					);
+					t;					
 				| _ -> assert false
 			) types)
 		else if path = ([],"Dynamic") then
@@ -998,7 +1003,7 @@ let type_module ctx m tdecls loadp =
 				e_meta = type_meta ctx d.d_meta;
 				e_types = [];
 				e_private = priv;
-				e_extern = List.mem EExtern d.d_flags || d.d_data = [];
+				e_extern = List.mem EExtern d.d_flags;
 				e_constrs = PMap.empty;
 				e_names = [];
 			} in
@@ -1148,6 +1153,7 @@ let type_module ctx m tdecls loadp =
 				names := c :: !names;
 			) (d.d_data @ extra);
 			e.e_names <- List.rev !names;
+			e.e_extern <- e.e_extern || e.e_names = [];
 		| ETypedef d ->
 			let t = get_tdef d.d_name in
 			ctx.type_params <- t.t_types;
