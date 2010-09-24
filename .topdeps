@@ -1,1 +1,2 @@
 t/dump-tokens-and-ast
+t/this-completion
