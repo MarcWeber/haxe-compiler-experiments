@@ -1,8 +1,6 @@
 From: Marc Weber <marco-oweber@gmx.de>
-Subject: [PATCH] t/dump-tokens-and-ast
+Subject: [PATCH] t/all
 
-dump tokens and ast
-This adds a dependency on: git://repo.or.cz/deriving.git
-(preprocessor library pa_deriving.cma)
+topgit driven merge of all important topics
 
 Signed-off-by: Marc Weber <marco-oweber@gmx.de>
