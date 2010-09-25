@@ -164,7 +164,7 @@ let action_fetch_deps(cfg) =
         cvs motiontwin "co neko/libs/include/ocaml";;
 
 let action_build_deps(config) =
-        if (not (Sys.file_exists "haxe"))
+        if (not (Sys.file_exists "ocaml/swflib"))
           then action_fetch_deps(config);
 
 	(* EXTLIB *)
