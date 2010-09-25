@@ -65,6 +65,7 @@ let os_type = Sys.os_type
 
 
 let pa_deriving = ref "pa_deriving.cma"
+let pa_deriving_lib = ref None
 let zlib_option = ref (DeferredOption 
 	(fun () ->match os_type with
 		| "Win32" -> ("../ocaml/extc/zlib/zlib.lib", "../ocaml/extc/zlib/zlib.lib")  (* TODO *)
@@ -94,6 +95,7 @@ let arg_spec = [
 		"compile to executable (default: "^ bool_to_string native_default ^") ");
 	("--with-zlib", String (fun f -> zlib_option := Option ((Filename.dirname (Filename.dirname f))  ^ "/include", f ^ "/lib" ) ), "zlib (.so) location");
 	("--with-pa_deriving", String (fun f -> pa_deriving := f ), "location of pa_deriving.cma (from git repo: git://repo.or.cz/deriving.git)");
+	("--with-pa_deriving_lib_dir", String (fun f -> pa_deriving_lib := Some f ), "location of pa_deriving.cma (from git repo: git://repo.or.cz/deriving.git)");
 	("--actions", String (fun f -> actions_by_user := !actions_by_user @ Str.split (regexp ",") f) , "actions");
 ]
 
@@ -126,6 +128,9 @@ let ocamlc file cfg =
 let modules l ext =
 	String.concat " " (List.map (fun f -> f ^ ext) l)
 
+(* pa_deriving *)
+let pp = (fun () -> "-pp \"camlp4o " ^ !pa_deriving ^ "\"")
+let pa_deriving_lib_dir_s = (fun () -> match !pa_deriving_lib with | None -> "" | Some f -> "-I "^f^" ")
 ;;
 
 (* data for compiling HaXe *)
@@ -138,7 +143,7 @@ let libs = [
         "unix";
         "str";
         "PATH_TO_DERIVING_MLIs" (* should be a configuration option *)
-]
+] @ (match !pa_deriving_lib with | None -> [] | Some f -> [f])
 let neko = "neko/libs/include/ocaml"
 let paths = [
         "ocaml";
@@ -218,9 +223,7 @@ let action_build_haxe(cfg) =
 	(* HAXE *)
 	(* Sys.chdir "haxe"; *)
 	command "ocamllex lexer.mll";
-        (* probably the deriving location has to be modified manually by -I or
-         * by giving full path *)
-	ocamlc (path_str ^ " -pp \"camlp4o "^ !pa_deriving ^"\" " ^ modules mlist ".ml") cfg;
+	ocamlc (path_str ^ " "^ pp() ^ " " ^ pa_deriving_lib_dir_s() ^ " " ^ modules mlist ".ml") cfg;
 	if !bytecode then command ("ocamlc -custom -o bin/haxe-byte" ^ cfg.exe_ext ^ libs_str ".cma" ^ modules mlist ".cmo");
 	if !native then command ("ocamlopt -o bin/haxe" ^ cfg.exe_ext ^ libs_str ".cmxa" ^ modules mlist ".cmx");;
 
@@ -267,7 +270,7 @@ let actions = [
   };
   { name= "ocamake_create_makefile";
     action= (fun(cfg) -> 
-      command(" ocamake -o bin/haxe -mak -opt -pp \"camlp4o ~/.nix-profile/lib/pa_deriving.cma\" " ^ path_str ^ " " ^ modules mlist ".ml");
+      command(" ocamake "^pa_deriving_lib_dir_s()^"-o bin/haxe -mak -opt "^ pp() ^" " ^ path_str ^ " " ^ modules mlist ".ml");
       let append =
           "ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx\n"
         ^ "ocaml_swf_lib = ocaml/swflib/swf.cmx  ocaml/swflib/actionScript.cmx ocaml/swflib/as3code.cmx ocaml/swflib/as3parse.cmx ocaml/swflib/as3hlparse.cmx ocaml/swflib/swfParser.cmx \n"
