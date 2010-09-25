@@ -223,8 +223,11 @@ let action_build_haxe(cfg) =
 	(* Sys.chdir "haxe"; *)
 	command "ocamllex lexer.mll";
 	ocamlc (path_str ^ " "^ pp() ^ " " ^ pa_deriving_lib_dir_s() ^ " " ^ modules mlist ".ml") cfg;
+        let derive_impl = " nums.cmxa "
+                          ^ (match !pa_deriving_lib with None -> "" | Some f -> f ^ "/") ^ "show.cmx" in
+        (* TODO if bytecode add derive_impl *)
 	if !bytecode then command ("ocamlc -custom -o bin/haxe-byte" ^ cfg.exe_ext ^ libs_str ".cma" ^ modules mlist ".cmo");
-	if !native then command ("ocamlopt -o bin/haxe" ^ cfg.exe_ext ^ libs_str ".cmxa" ^ modules mlist ".cmx");;
+	if !native then command ("ocamlopt -o bin/haxe" ^ cfg.exe_ext ^ derive_impl ^ " " ^ libs_str ".cmxa" ^ modules mlist ".cmx");;
 
 
 
