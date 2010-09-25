@@ -141,8 +141,7 @@ let libs = [
         "ocaml/swflib/swflib";
         "ocaml/xml-light/xml-light";
         "unix";
-        "str";
-        "PATH_TO_DERIVING_MLIs" (* should be a configuration option *)
+        "str"
 ] @ (match !pa_deriving_lib with | None -> [] | Some f -> [f])
 let neko = "neko/libs/include/ocaml"
 let paths = [
