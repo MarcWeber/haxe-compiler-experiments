@@ -76,6 +76,22 @@ let is_not_assign = function
 	| OpAssign | OpAssignOp _ -> false
 	| _ -> true
 
+(* try this. completion in functions of classes. The location is given by p and
+ * Stream.npeek 1 and is fuzzy, because many spaces can be between two commands
+ * There are some false positives such as private function(){ function(){ .. HERE
+ * (the inner function does not (yet?) have this context)
+ * But the benefits are more important to me. So this allows completion of this.
+ * context without typing "this."
+ *)
+let thisCompl p s =
+	if do_resume() then
+		match Stream.npeek 1 s with
+			| [(_,p2)] ->
+				let pos = !resume_display in
+				if (p2.pmin >= pos.pmax && pos.pmin >= p.pmax) then
+					display (EDisplay ((EConst (Ident ("this")), p),false),p)
+			| _ -> ()
+
 let swap _op op =
 	let p1 = priority _op in
 	let p2 = priority op in
@@ -443,7 +459,9 @@ and parse_class_herit = parser
 	| [< '(Kwd Extends,_); t = parse_type_path >] -> HExtends t
 	| [< '(Kwd Implements,_); t = parse_type_path >] -> HImplements t
 
-and block1 = parser
+and block1 pBrOpen s =
+	thisCompl pBrOpen s;
+	match s with parser
 	| [< '(Const (Ident name),p); s >] -> block2 name true p s
 	| [< '(Const (Type name),p); s >] -> block2 name false p s
 	| [< b = block [] >] -> EBlock b
@@ -452,7 +470,8 @@ and block2 name ident p = parser
 	| [< '(DblDot,_); e = expr; l = parse_obj_decl >] -> EObjectDecl ((name,e) :: l)
 	| [< e = expr_next (EConst (if ident then Ident name else Type name),p); s >] ->
 		try
-			let _ = semicolon s in
+			let p = semicolon s in
+				thisCompl p s;
 			let b = block [e] s in
 			EBlock b
 		with
@@ -502,7 +521,7 @@ and parse_var_decl = parser
 		| [< >] -> (name,t,None)
 
 and expr = parser
-	| [< '(BrOpen,p1); b = block1; '(BrClose,p2); s >] ->
+	| [< '(BrOpen,p1); b = block1 p1; '(BrClose,p2); s >] ->
 		let e = (b,punion p1 p2) in
 		(match b with
 		| EObjectDecl _ -> expr_next e s
@@ -598,7 +617,8 @@ and expr_next e1 = parser
 			| (EConst (Int v),p2) when p2.pmax = p.pmin -> expr_next (EConst (Float (v ^ ".")),punion p p2) s
 			| _ -> serror())
 	| [< '(POpen,p1); s >] ->
-		if is_resuming p1 then display (EDisplay (e1,true),p1);
+		thisCompl p1 s;
+		(* if is_resuming p1 then display (EDisplay (e1,true),p1); *)
 		(match s with parser
 		| [< params = parse_call_params e1; '(PClose,p2); s >] -> expr_next (ECall (e1,params) , punion (pos e1) p2) s
 		| [< >] -> serror())
