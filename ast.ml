@@ -24,7 +24,7 @@ type pos = {
 }
 
 type keyword =
-	| Function
+	| Function (* Fun: shortcut for Function, see keywords *)
 	| Class
 	| Var
 	| If
