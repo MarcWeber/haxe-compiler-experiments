@@ -99,6 +99,7 @@ type constant =
 	| Float of string
 	| String of string
 	| Ident of string
+	| UnnamedA of int * string (* unnamed argument for very short lamdas such as in $1 + $2named: *)
 	| Type of string
 	| Regexp of string * string
 
@@ -293,6 +294,7 @@ let s_constant = function
 	| Float s -> s
 	| String s -> "\"" ^ s_escape s ^ "\""
 	| Ident s -> s
+	| UnnamedA (i,s) -> "\"$" ^ (string_of_int i) ^ s_escape s ^ "\""
 	| Type s -> s
 	| Regexp (r,o) -> "~/" ^ r ^ "/"
 
