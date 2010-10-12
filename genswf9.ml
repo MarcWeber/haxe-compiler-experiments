@@ -91,6 +91,7 @@ type context = {
 	mutable in_static : bool;
 	mutable curblock : texpr list;
 	mutable block_vars : (hl_slot * string * hl_name option) list;
+	mutable used_vars : (string , pos) PMap.t;
 	mutable try_scope_reg : register option;
 	mutable for_call : bool;
 }
@@ -580,8 +581,10 @@ let begin_fun ctx args tret el stat p =
 	let old_static = ctx.in_static in
 	let last_line = ctx.last_line in
 	let old_treg = ctx.try_scope_reg in
+	let old_uvars = ctx.used_vars in
 	ctx.infos <- default_infos();
 	ctx.code <- DynArray.create();
+	ctx.used_vars <- PMap.empty;
 	ctx.trys <- [];
 	ctx.block_vars <- [];
 	ctx.in_static <- stat;
@@ -623,6 +626,13 @@ let begin_fun ctx args tret el stat p =
 	ctx.try_scope_reg <- (try List.iter loop_try el; None with Exit -> Some (alloc_reg ctx KDynamic));
 	(fun () ->
 		let hasblock = ctx.block_vars <> [] || ctx.trys <> [] in
+		List.iter (fun (_,v,_) ->
+			try
+				let p = PMap.find v ctx.used_vars in
+				error ("Accessing to this member variable is prevented by local '" ^ v ^ "' used in closure") p
+			with
+				Not_found -> ()
+		) ctx.block_vars;
 		let code = DynArray.to_list ctx.code in
 		let extra = (
 			if hasblock then begin
@@ -682,6 +692,7 @@ let begin_fun ctx args tret el stat p =
 		ctx.in_static <- old_static;
 		ctx.last_line <- last_line;
 		ctx.try_scope_reg <- old_treg;
+		ctx.used_vars <- old_uvars;
 		mt
 	)
 
@@ -746,6 +757,9 @@ let pop_value ctx retval =
 let gen_expr_ref = ref (fun _ _ _ -> assert false)
 let gen_expr ctx e retval = (!gen_expr_ref) ctx e retval
 
+let use_var ctx f p =
+	if not (PMap.mem f ctx.used_vars) then ctx.used_vars <- PMap.add f p ctx.used_vars
+
 let gen_access ctx e (forset : 'a) : 'a access =
 	match e.eexpr with
 	| TLocal i ->
@@ -754,7 +768,9 @@ let gen_access ctx e (forset : 'a) : 'a access =
 		let id, k, closure = property ctx f e1.etype in
 		if closure && not ctx.for_call then error "In Flash9, this method cannot be accessed this way : please define a local function" e1.epos;
 		(match e1.eexpr with
-		| TConst TThis when not ctx.in_static -> write ctx (HFindProp id)
+		| TConst TThis when not ctx.in_static -> 
+			use_var ctx f e.epos;
+			write ctx (HFindProp id)
 		| _ -> gen_expr ctx true e1);
 		(match k with
 		| Some t -> VCast (id,t)
@@ -1372,12 +1388,14 @@ and gen_call ctx retval e el r =
 		List.iter (gen_expr ctx true) el;
 		write ctx (HConstructSuper (List.length el));
 	| TField ({ eexpr = TConst TSuper },f) , _ ->
+		use_var ctx f e.epos;
 		let id = ident f in
 		write ctx (HFindPropStrict id);
 		List.iter (gen_expr ctx true) el;
 		write ctx (HCallSuper (id,List.length el));
 		coerce ctx (classify ctx r);
 	| TField ({ eexpr = TConst TThis },f) , _ when not ctx.in_static ->
+		use_var ctx f e.epos;
 		let id = ident f in
 		write ctx (HFindProp id);
 		List.iter (gen_expr ctx true) el;
@@ -1454,6 +1472,12 @@ and gen_unop ctx retval op flag e =
 			write ctx (HOp op);
 			setvar ctx acc_write (if retval then Some k else None)
 
+and check_binop ctx e1 e2 =
+	let invalid = (match classify ctx e1.etype, classify ctx e2.etype with
+	| KInt, KUInt | KUInt, KInt -> (match e1.eexpr, e2.eexpr with TConst (TInt i) , _ | _ , TConst (TInt i) -> i < 0l | _ -> true)
+	| _ -> false) in
+	if invalid then error "Comparison of Int and UInt might lead to unexpected results" (punion e1.epos e2.epos);
+
 and gen_binop ctx retval op e1 e2 t =
 	let write_op op =
 		let iop = (match op with
@@ -1490,13 +1514,8 @@ and gen_binop ctx retval op e1 e2 t =
 			write ctx (HOp op);
 			if op = A3OMod && classify ctx e1.etype = KInt && classify ctx e2.etype = KInt then coerce ctx (classify ctx t);
 	in
-	let invalid_comparison() =
-		match classify ctx e1.etype, classify ctx e2.etype with
-		| KInt, KUInt | KUInt, KInt -> (match e1.eexpr, e2.eexpr with TConst (TInt i) , _ | _ , TConst (TInt i) -> i < 0l | _ -> true)
-		| _ -> false
-	in
 	let gen_op o =
-		if invalid_comparison() then error "Comparison of Int and UInt might lead to unexpected results" (punion e1.epos e2.epos);
+		check_binop ctx e1 e2;
 		gen_expr ctx true e1;
 		gen_expr ctx true e2;
 		write ctx (HOp o)
@@ -1596,6 +1615,7 @@ and jump_expr_gen ctx e jif jfun =
 	| TParenthesis e -> jump_expr_gen ctx e jif jfun
 	| TBinop (op,e1,e2) ->
 		let j t f =
+			check_binop ctx e1 e2;
 			gen_expr ctx true e1;
 			gen_expr ctx true e2;
 			jfun (if jif then t else f)
@@ -2047,6 +2067,7 @@ let generate com =
 		continues = [];
 		curblock = [];
 		block_vars = [];
+		used_vars = PMap.empty;
 		in_static = false;
 		last_line = -1;
 		last_file = "";
