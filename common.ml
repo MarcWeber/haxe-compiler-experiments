@@ -71,6 +71,9 @@ type context = {
 	(* typing *)
 	mutable basic : basic_types;
 	mutable lines : Lexer.line_index;
+	(* development only *)
+	mutable dump_tokens : bool;
+	mutable dump_ast : bool;
 }
 
 exception Abort of string * Ast.pos
@@ -111,6 +114,8 @@ let create v =
 			tarray = (fun _ -> assert false);
 		};
 		lines = Lexer.build_line_index();
+		dump_ast = false;
+		dump_tokens = false;
 	}
 
 let clone com =

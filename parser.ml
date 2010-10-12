@@ -1010,11 +1010,35 @@ let parse ctx code file =
 			Exit -> None
 	) in
 	try
+		let dumpThing p what printAction =
+			if (p) then (
+				prerr_endline ("\ndumping " ^ what ^ " of " ^ file ^ "start\n");
+				printAction();
+				prerr_endline ("\ndumping " ^ what ^ " of " ^ file ^ "done\n");
+		) in
+
+		dumpThing ctx.dump_tokens "tokens before parsing" (fun() ->
+				List.iter (fun tok -> 
+					let t = fst tok in
+					if (t != Eof) then
+						prerr_endline ((Show.show<token> (fst tok)) ^ "\n")
+				) (Stream.npeek 99999 s) (* this will always fill with Eofs until 99999 tokens were generated (?) *)
+		);
+
 		let l = parse_file s in
+		dumpThing ctx.dump_ast "ast after parsing" (fun() ->
+			prerr_endline (Show.show<string list * (Ast.type_def * Ast.pos) list> l);
+		);
+
 		(match !mstack with [] -> () | p :: _ -> error Unclosed_macro p);
 		cache := old_cache;
 		Lexer.restore old;
-		(fst l, rewriteShortLambdas (snd l))
+
+		let l2 = (fst l, rewriteShortLambdas (snd l)) in
+		dumpThing ctx.dump_ast "ast after rewriting short lambdas" (fun() ->
+			prerr_endline (Show.show<string list * (Ast.type_def * Ast.pos) list> l2);
+		);
+		l2
 	with
 		| Stream.Error _
 		| Stream.Failure ->
