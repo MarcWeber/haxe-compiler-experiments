@@ -22,6 +22,7 @@ type pos = {
 	pmin : int;
 	pmax : int;
 }
+	deriving (Show)
 
 type keyword =
 	| Function (* Fun: shortcut for Function, see keywords *)
@@ -62,6 +63,7 @@ type keyword =
 	| Callback
 	| Inline
 	| Using
+	deriving (Show)
 
 type binop =
 	| OpAdd
@@ -86,6 +88,7 @@ type binop =
 	| OpMod
 	| OpAssignOp of binop
 	| OpInterval
+	deriving (Show)
 
 type unop =
 	| Increment
@@ -93,6 +96,7 @@ type unop =
 	| Not
 	| Neg
 	| NegBits
+	deriving (Show)
 
 type constant =
 	| Int of string
@@ -102,6 +106,7 @@ type constant =
 	| UnnamedA of int * string (* unnamed argument for very short lamdas such as in $1 + $2named: *)
 	| Type of string
 	| Regexp of string * string
+	deriving (Show)
 
 type token =
 	| Eof
@@ -126,14 +131,17 @@ type token =
 	| Macro of string
 	| Question
 	| At
+	deriving (Show)
 
 type unop_flag =
 	| Prefix
 	| Postfix
+	deriving (Show)
 
 type while_flag =
 	| NormalWhile
 	| DoWhile
+	deriving (Show)
 
 type type_path = {
 	tpackage : string list;
@@ -157,6 +165,7 @@ and complex_type =
 	| CTAnonymous of (string * bool option * anonymous_field * pos) list
 	| CTParent of complex_type
 	| CTExtend of type_path * (string * bool option * anonymous_field * pos) list
+	deriving (Show)
 
 type func = {
 	f_args : (string * bool * complex_type option * expr option) list;
@@ -195,12 +204,16 @@ and expr_def =
 	| ETernary of expr * expr * expr
 
 and expr = expr_def * pos
+	deriving (Show)
 
 type type_param = string * type_path list
+	deriving (Show)
 
 type documentation = string option
+	deriving (Show)
 
 type metadata = (string * expr list) list
+	deriving (Show)
 
 type access =
 	| APublic
@@ -209,15 +222,18 @@ type access =
 	| AOverride
 	| ADynamic
 	| AInline
+	deriving (Show)
 
 type class_field =
 	| FVar of string * documentation * metadata * access list * complex_type option * expr option
 	| FFun of string * documentation * metadata * access list * type_param list * func
 	| FProp of string * documentation * metadata * access list * string * string * complex_type
+	deriving (Show)
 
 type enum_flag =
 	| EPrivate
 	| EExtern
+	deriving (Show)
 
 type class_flag =
 	| HInterface
@@ -225,8 +241,10 @@ type class_flag =
 	| HPrivate
 	| HExtends of type_path
 	| HImplements of type_path
+	deriving (Show)
 
 type enum_constructor = string * documentation * metadata * (string * bool * complex_type) list * pos
+	deriving (Show)
 
 type ('a,'b) definition = {
 	d_name : string;
@@ -236,6 +254,7 @@ type ('a,'b) definition = {
 	d_flags : 'a list;
 	d_data : 'b;
 }
+	deriving (Show)
 
 type type_def =
 	| EClass of (class_flag, (class_field * pos) list) definition
@@ -243,10 +262,13 @@ type type_def =
 	| ETypedef of (enum_flag, complex_type) definition
 	| EImport of type_path
 	| EUsing of type_path
+	deriving (Show)
 
 type type_decl = type_def * pos
+	deriving (Show)
 
 type package = string list * type_decl list
+	deriving (Show)
 
 let pos = snd
 
