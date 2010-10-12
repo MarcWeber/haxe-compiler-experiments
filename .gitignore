@@ -1,0 +1,7 @@
+*.cmo
+*.cmx
+*.o
+bin
+tags
+ID
+vl_project.vim
