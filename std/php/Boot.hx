@@ -1,6 +1,6 @@
 package php;
 
-class Boot {
+@:keep class Boot {
 	static var qtypes;
 	static var ttypes;
 	static var tpaths;
@@ -69,7 +69,7 @@ class _hx_array implements ArrayAccess, IteratorAggregate {
 
 	function push($x) {
 		$this->»a[] = $x;
-		$this->length++;
+		return ++$this->length;
 	}
 
 	function remove($x) {

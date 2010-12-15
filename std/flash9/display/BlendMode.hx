@@ -14,8 +14,6 @@ extern enum BlendMode {
 	NORMAL;
 	OVERLAY;
 	SCREEN;
-	SUBTRACT;
-	#if flash10
 	SHADER;
-	#end
+	SUBTRACT;
 }

@@ -147,7 +147,7 @@ let type_inline ctx cf f ethis params tret p =
 	Hashtbl.add hcount vthis this_count;
 	let vars = List.map2 (fun (n,t) e ->
 		let flag = not (Hashtbl.mem lsets n) && (match e.eexpr with
-			| TLocal _ | TConst _ -> true
+			| TLocal _ | TConst _ | TFunction _ -> true
 			| _ ->
 				let used = !(Hashtbl.find hcount n) in
 				used <= 1
@@ -172,9 +172,15 @@ let type_inline ctx cf f ethis params tret p =
 	if Common.defined ctx.com "js" && (init <> None || !has_vars) then
 		None
 	else
+		let wrap e =
+			match e.eexpr with
+			(* we can't mute the type of a TNew because it will be used later to get parameters *)
+			| TNew _ -> mk (TParenthesis e) tret e.epos
+			| _ -> { e with etype = tret }
+		in
 		let e = (match e.eexpr, init with
-			| TBlock [e] , None -> { e with etype = tret; }
-			| _ , None -> { e with etype = tret; }
+			| TBlock [e] , None -> wrap e
+			| _ , None -> wrap e
 			| TBlock l, Some init -> mk (TBlock (init :: l)) tret e.epos
 			| _, Some init -> mk (TBlock [init;e]) tret e.epos
 		) in
@@ -234,10 +240,13 @@ let optimize_for_loop ctx i e1 e2 p =
 			| TBlock el -> mk (TBlock (init :: el)) t_void e2.epos
 			| _ -> mk (TBlock [init;e2]) t_void p
 		in
+		(*
+			force locals to be of Int type (to prevent Int/UInt issues)
+		*)
 		(match max with
 		| None ->
 			lblock [
-				mk (TVars [tmp,i1.etype,Some i1]) t_void p;
+				mk (TVars [tmp,t_int,Some i1]) t_void p;
 				mk (TWhile (
 					mk (TBinop (OpLt, etmp, i2)) ctx.t.tbool p,
 					block,
@@ -246,9 +255,9 @@ let optimize_for_loop ctx i e1 e2 p =
 			]
 		| Some max ->
 			lblock [
-				mk (TVars [tmp,i1.etype,Some i1;max,i2.etype,Some i2]) t_void p;
+				mk (TVars [tmp,t_int,Some i1;max,t_int,Some i2]) t_void p;
 				mk (TWhile (
-					mk (TBinop (OpLt, etmp, mk (TLocal max) i2.etype p)) ctx.t.tbool p,
+					mk (TBinop (OpLt, etmp, mk (TLocal max) t_int p)) ctx.t.tbool p,
 					block,
 					NormalWhile
 				)) t_void p;
@@ -441,7 +450,7 @@ let rec reduce_loop ctx is_sub e =
 			(match inl with
 			| None -> e
 			| Some e -> e)
-		| _ -> 
+		| _ ->
 			e)
 	| TParenthesis ({ eexpr = TConst _ } as ec) | TBlock [{ eexpr = TConst _ } as ec] ->
 		{ ec with epos = e.epos }
@@ -470,7 +479,7 @@ let reduce_expression ctx e =
 	correspond to the natural operand priority order for the platform
 *)
 
-let rec sanitize e =	
+let rec sanitize e =
 	match e.eexpr with
 	| TBinop (op,e1,e2) ->
 		let parent e = mk (TParenthesis e) e.etype e.epos in

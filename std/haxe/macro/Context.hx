@@ -30,11 +30,12 @@ import haxe.macro.Expr;
 **/
 class Context {
 
+#if neko
 	/**
 		Display a compilation error at the given position in code
 	**/
-	public static function error( msg : String, pos : Position ) {
-		load("error",2)(untyped msg.__s, pos);
+	public static function error( msg : String, pos : Position ) : Dynamic {
+		return load("error",2)(untyped msg.__s, pos);
 	}
 
 	/**
@@ -75,6 +76,34 @@ class Context {
 	public static function defined( s : String ) : Bool {
 		return load("defined", 1)(untyped s.__s);
 	}
+
+	/**
+		Resolve a type from its name.
+	**/
+	public static function getType( name : String ) : Type {
+		return load("get_type", 1)(untyped name.__s);
+	}
+
+	/**
+		Parse an expression.
+	**/
+	public static function parse( expr : String, pos : Position ) : Expr {
+		return load("parse", 2)(untyped expr.__s, pos);
+	}
+
+	/**
+		Quickly build an hashed MD5 signature for any given value
+	**/
+	public static function signature( v : Dynamic ) : String {
+		return new String(load("signature", 1)(v));
+	}
+	
+	/**
+		Evaluate the type a given expression would have in the context of the current macro call.
+	**/
+	public static function typeof( e : Expr ) : Type {
+		return load("typeof", 1)(e);
+	}
 	
 	static function load( f, nargs ) : Dynamic {
 		#if macro
@@ -83,5 +112,7 @@ class Context {
 		return Reflect.makeVarArgs(function(_) throw "Can't be called outside of macro");
 		#end
 	}
+
+#end
 
 }

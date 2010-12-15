@@ -128,9 +128,14 @@ let unify_call_params ctx name el args p inline =
 	let arg_error ul name opt p =
 		raise (Error (Stack (Unify ul,Custom ("For " ^ (if opt then "optional " else "") ^ "function argument '" ^ name ^ "'")), p))
 	in
+	let enull = (match ctx.com.platform with
+		| Js -> TLocal "undefined"
+		| Flash -> TLocal "__undefined__"
+		| _ -> TConst TNull
+	) in
 	let rec no_opt = function
 		| [] -> []
-		| ({ eexpr = TConst TNull },true) :: l -> no_opt l
+		| (e,true) :: l when e.eexpr == enull -> no_opt l
 		| l -> List.map fst l
 	in
 	let rec default_value t =
@@ -153,12 +158,12 @@ let unify_call_params ctx name el args p inline =
 			let e = type_expr ctx infos true in
 			(e, true)
 		else
-			(null t p, true)
+			(mk enull t p, true)
 	in
 	let rec loop acc l l2 skip =
 		match l , l2 with
 		| [] , [] ->
-			if not (inline && ctx.g.doinline) && (Common.defined ctx.com "flash" || Common.defined ctx.com "js") then
+			if not (inline && ctx.g.doinline) && (match ctx.com.platform with Flash | Flash9 | Js -> true | _ -> false) then
 				List.rev (no_opt acc)
 			else
 				List.rev (List.map fst acc)
@@ -328,6 +333,16 @@ let rec acc_get ctx g p =
 	| AKMacro _ ->
 		assert false
 
+let error_require r p =
+	let r = try
+		if String.sub r 0 5 <> "flash" then raise Exit;
+		let _, v = ExtString.String.replace (String.sub r 5 (String.length r - 5)) "_" "." in
+		"flash version " ^ v ^ " (use -swf-version " ^ v ^ ")"
+	with _ ->
+		"'" ^ r ^ "' to be enabled"
+	in
+	error ("Accessing this field require " ^ r) p
+
 let field_access ctx mode f t e p =
 	let fnormal() = AKExpr (mk (TField (e,f.cf_name)) t p) in
 	let normal() =
@@ -365,7 +380,7 @@ let field_access ctx mode f t e p =
 				normal()
 		| AccCall m ->
 			if m = ctx.curmethod && (match e.eexpr with TConst TThis -> true | TTypeExpr (TClassDecl c) when c == ctx.curclass -> true | _ -> false) then
-				let prefix = if Common.defined ctx.com "as3" then "$" else "" in
+				let prefix = (match ctx.com.platform with Flash9 when Common.defined ctx.com "as3" -> "$" | _ -> "") in
 				AKExpr (mk (TField (e,prefix ^ f.cf_name)) t p)
 			else if mode = MSet then
 				AKSet (e,m,t,f.cf_name)
@@ -379,6 +394,8 @@ let field_access ctx mode f t e p =
 			AKNo f.cf_name
 		| AccInline ->
 			AKInline (e,f,t)
+		| AccRequire r ->
+			error_require r p
 
 let using_field ctx mode e i p =
 	if mode = MSet then raise Not_found;
@@ -501,7 +518,7 @@ let rec type_field ctx e i p mode =
 			| Some t ->
 				let t = apply_params c.cl_types params t in
 				if mode = MGet && PMap.mem "resolve" c.cl_fields then
-					AKExpr (make_call ctx (mk (TField (e,"resolve")) (tfun [ctx.t.tstring] t) p) [Typeload.type_constant ctx (String i) p] t p)
+					AKExpr (make_call ctx (mk (TField (e,"resolve")) (tfun [ctx.t.tstring] t) p) [Codegen.type_constant ctx.com (String i) p] t p)
 				else
 					AKExpr (mk (TField (e,i)) t p)
 			| None ->
@@ -553,7 +570,7 @@ let rec type_field ctx e i p mode =
 			field_access ctx mode f (field_type f) e p
 		)
 	| TMono r ->
-		if ctx.untyped && Common.defined ctx.com "swf-mark" && Common.defined ctx.com "flash" then ctx.com.warning "Mark" p;
+		if ctx.untyped && (match ctx.com.platform with Flash -> Common.defined ctx.com "swf-mark" | _ -> false) then ctx.com.warning "Mark" p;
 		let f = {
 			cf_name = i;
 			cf_type = mk_mono();
@@ -934,7 +951,7 @@ and type_switch ctx e cases def need_val p =
 			) pl in
 			let e = type_expr ctx e in
 			(match e.eexpr with
-			| TEnumField (en,s) -> type_match e en s pl
+			| TEnumField (en,s) | TClosure ({ eexpr = TTypeExpr (TEnumDecl en) },s) -> type_match e en s pl
 			| _ -> if pl = [] then case_expr e else raise Exit)
 		with Exit ->
 			let e = (if pl = [] then e else (ECall (e,pl),p)) in
@@ -1168,7 +1185,7 @@ and type_expr ctx ?(need_val=true) (e,p) =
 		let t = Typeload.load_core_type ctx "EReg" in
 		mk (TNew ((match t with TInst (c,[]) -> c | _ -> assert false),[],[str;opt])) t p
 	| EConst c ->
-		Typeload.type_constant ctx c p
+		Codegen.type_constant ctx.com c p
     | EBinop (op,e1,e2) ->
 		type_binop ctx op e1 e2 p
 	| EBlock [] when need_val ->
@@ -1389,6 +1406,9 @@ and type_expr ctx ?(need_val=true) (e,p) =
 			if PMap.mem name ctx.locals then error ("Local variable " ^ name ^ " is preventing usage of this class here") p;
 			let f = get_constructor c p in
 			if not f.cf_public && not (is_parent c ctx.curclass) && not ctx.untyped then error "Cannot access private constructor" p;
+			(match f.cf_kind with
+			| Var { v_read = AccRequire r } -> error_require r p
+			| _ -> ());
 			let el = (match follow (apply_params c.cl_types params (field_type f)) with
 			| TFun (args,r) ->
 				unify_call_params ctx (Some "new") el args p false
@@ -1806,8 +1826,92 @@ let generate ctx main excludes =
 (* ---------------------------------------------------------------------- *)
 (* MACROS *)
 
-let type_macro ctx cpath f el p =
+let get_type_patch ctx t sub =
+	let new_patch() =
+		{ tp_type = None; tp_remove = false; tp_meta = [] }
+	in
+	let path = Ast.parse_path t in
+	let h, tp = (try
+		Hashtbl.find ctx.g.type_patches path
+	with Not_found ->
+		let h = Hashtbl.create 0 in
+		let tp = new_patch() in
+		Hashtbl.add ctx.g.type_patches path (h,tp);
+		h, tp
+	) in
+	match sub with
+	| None -> tp
+	| Some k ->
+		try
+			Hashtbl.find h k
+		with Not_found ->
+			let tp = new_patch() in
+			Hashtbl.add h k tp;
+			tp
+
+let parse_string ctx s p =
+	let old = Lexer.save() in
+	Lexer.init p.pfile;
+	let _, decls = try
+		Parser.parse ctx.com (Lexing.from_string s)
+	with Parser.Error (e,_) ->
+		failwith (Parser.error_msg e)
+	| Lexer.Error (e,_) ->
+		failwith (Lexer.error_msg e)
+	in
+	Lexer.restore old;
+	match decls with
+	| [(d,_)] -> d
+	| _ -> assert false
+
+let make_macro_api ctx p =
+	{
+		Interp.pos = p;
+		Interp.get_type = (fun s ->
+			let path = parse_path s in
+			try
+				Some (Typeload.load_instance ctx { tpackage = fst path; tname = snd path; tparams = []; tsub = None } p true)
+			with Error (Module_not_found _,p2) when p == p2 ->
+				None
+		);
+		Interp.parse_string = (fun s p ->
+			let head = "class X{static function main() " in
+			let head = (if p.pmin > String.length head then head ^ String.make (p.pmin - String.length head) ' ' else head) in
+			match parse_string ctx (head ^ s ^ "}") p with
+			| EClass { d_data = [{ cff_name = "main"; cff_kind = FFun (_,{ f_expr = e }) }]} -> e
+			| _ -> assert false
+		);
+		Interp.typeof = (fun e ->
+			let e = (try type_expr ctx ~need_val:true e with Error (msg,_) -> failwith (error_msg msg)) in
+			e.etype
+		);
+		Interp.type_patch = (fun t f s v ->
+			let v = (match v with None -> None | Some s ->
+				match parse_string ctx ("typedef T = " ^ s) null_pos with
+				| ETypedef { d_data = ct } -> Some ct
+				| _ -> assert false
+			) in
+			let tp = get_type_patch ctx t (Some (f,s)) in
+			match v with
+			| None -> tp.tp_remove <- true
+			| Some _ -> tp.tp_type <- v
+		);
+		Interp.meta_patch = (fun m t f s ->
+			let m = (match parse_string ctx (m ^ " typedef T = T") null_pos with
+				| ETypedef t -> t.d_meta
+				| _ -> assert false
+			) in
+			let tp = get_type_patch ctx t (match f with None -> None | Some f -> Some (f,s)) in
+			tp.tp_meta <- tp.tp_meta @ m;
+		);
+		Interp.print = (fun s ->
+			if not !Common.display then print_string s
+		);
+	}
+
+let load_macro ctx cpath f p =
 	let t = Common.timer "macro execution" in
+	let api = make_macro_api ctx p in
 	let ctx2 = (match ctx.g.macros with
 		| Some (select,ctx) ->
 			select();
@@ -1822,7 +1926,7 @@ let type_macro ctx cpath f el p =
 			Common.define com2 "macro";
 			Common.init_platform com2 Neko;
 			let ctx2 = ctx.g.do_create com2 in
-			let mctx = Interp.create com2 in
+			let mctx = Interp.create com2 api in
 			let on_error = com2.error in
 			com2.error <- (fun e p -> Interp.set_error mctx true; on_error e p);
 			let macro = ((fun() -> Interp.select mctx), ctx2) in
@@ -1830,6 +1934,7 @@ let type_macro ctx cpath f el p =
 			ctx2.g.macros <- Some macro;
 			(* ctx2.g.core_api <- ctx.g.core_api; // causes some issues because of optional args and Null type in Flash9 *)
 			ignore(Typeload.load_module ctx2 (["haxe";"macro"],"Expr") p);
+			ignore(Typeload.load_module ctx2 (["haxe";"macro"],"Type") p);
 			finalize ctx2;
 			let types, _ = generate ctx2 None [] in
 			Interp.add_types mctx types;
@@ -1843,30 +1948,44 @@ let type_macro ctx cpath f el p =
 		| TInst (c,_) -> (try PMap.find f c.cl_statics with Not_found -> error ("Method " ^ f ^ " not found on class " ^ s_type_path cpath) p)
 		| _ -> error "Macro should be called on a class" p
 	) in
+	let meth = (match follow meth.cf_type with TFun (args,ret) -> args,ret | _ -> error "Macro call should be a method" p) in
+	let in_macro = ctx.in_macro in
+	if not in_macro then begin
+		finalize ctx2;
+		let types, modules = generate ctx2 None [] in
+		ctx2.com.types <- types;
+		ctx2.com.Common.modules <- modules;
+		Interp.add_types mctx types;
+	end else t();
+	let call args =
+		let r = Interp.call_path mctx ((fst cpath) @ [snd cpath]) f args api in
+		if not in_macro then t();
+		r
+	in
+	ctx2, meth, call
+
+let type_macro ctx cpath f el p =
+	let ctx2, (margs,mret), call_macro = load_macro ctx cpath f p in
 	let expr = Typeload.load_instance ctx2 { tpackage = ["haxe";"macro"]; tname = "Expr"; tparams = []; tsub = None} p false in
-	let nargs = (match follow meth.cf_type with
-		| TFun (args,ret) ->
-			unify ctx2 ret expr p;
-			(match args with
-			| [(_,_,t)] ->
-				(try
-					unify_raise ctx2 t expr p;
-					Some 1
-				with Error (Unify _,_) ->
-					unify ctx2 t (ctx2.t.tarray expr) p;
-					None)
-			| _ ->
-				List.iter (fun (_,_,t) -> unify ctx2 t expr p) args;
-				Some (List.length args))
+	unify ctx2 mret expr p;
+	let nargs = (match margs with
+		| [(_,_,t)] ->
+			(try
+				unify_raise ctx2 t expr p;
+				Some 1
+			with Error (Unify _,_) ->
+				unify ctx2 t (ctx2.t.tarray expr) p;
+				None)
 		| _ ->
-			assert false
+			List.iter (fun (_,_,t) -> unify ctx2 t expr p) margs;
+			Some (List.length margs)
 	) in
 	(match nargs with
 	| Some n -> if List.length el <> n then error ("This macro requires " ^ string_of_int n ^ " arguments") p
 	| None -> ());
 	let call() =
 		let el = List.map Interp.encode_expr el in
-		match Interp.call_path mctx ((fst cpath) @ [snd cpath]) f (if nargs = None then [Interp.enc_array el] else el) p with
+		match call_macro (if nargs = None then [Interp.enc_array el] else el) with
 		| None -> None
 		| Some v -> Some (try Interp.decode_expr v with Interp.Invalid_expr -> error "The macro didn't return a valid expression" p)
 	in
@@ -1882,6 +2001,7 @@ let type_macro ctx cpath f el p =
 		let ctx = {
 			ctx with locals = ctx.locals;
 		} in
+		let mctx = Interp.get_ctx() in
 		let pos = Interp.alloc_delayed mctx (fun() ->
 			(* remove $delay_call calls from the stack *)
 			Interp.unwind_stack mctx;
@@ -1891,16 +2011,35 @@ let type_macro ctx cpath f el p =
 		) in
 		let e = (EConst (Ident "__dollar__delay_call"),p) in
 		Some (EUntyped (ECall (e,[EConst (Int (string_of_int pos)),p]),p),p)
-	end else begin
-		finalize ctx2;
-		let types, modules = generate ctx2 None [] in
-		ctx2.com.types <- types;
-		ctx2.com.Common.modules <- modules;
-		Interp.add_types mctx types;
+	end else
 		call()
-	end) in
-	t();
+	) in
 	e
+
+let call_macro ctx path meth args p =
+	let ctx2, (margs,_), call = load_macro ctx path meth p in
+	let el = unify_call_params ctx2 (Some meth) args margs p false in
+	call (List.map (fun e -> try Interp.make_const e with Exit -> error "Parameter should be a constant" e.epos) el)
+
+let call_init_macro ctx e =
+	let p = { pfile = "--macro"; pmin = 0; pmax = 0 } in
+	let api = make_macro_api ctx p in
+	let e = api.Interp.parse_string e p in
+	match fst e with
+	| ECall (e,args) ->
+		let rec loop e =
+			match fst e with
+			| EField (e,f) | EType (e,f) -> f :: loop e
+			| EConst (Ident i | Type i) -> [i]
+			| _ -> error "Invalid macro call" p
+		in
+		let path, meth = (match loop e with
+		| [meth] -> (["haxe";"macro"],"Compiler"), meth
+		| meth :: cl :: path -> (List.rev path,cl), meth
+		| _ -> error "Invalid macro call" p) in
+		ignore(call_macro ctx path meth args p);
+	| _ ->
+		error "Invalid macro call" p
 
 (* ---------------------------------------------------------------------- *)
 (* TYPER INITIALIZATION *)
@@ -1919,6 +2058,7 @@ let rec create com =
 			modules = Hashtbl.create 0;
 			types_module = Hashtbl.create 0;
 			constructs = Hashtbl.create 0;
+			type_patches = Hashtbl.create 0;
 			delayed = [];
 			doinline = not (Common.defined com "no_inline");
 			hook_generate = [];

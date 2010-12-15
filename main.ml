@@ -102,13 +102,21 @@ let make_path f =
 	in
 	let rec loop = function
 		| [] -> error()
-		| [x] -> if String.length x = 0 || x.[0] < 'A' || x.[0] > 'Z' || invalid_char x then error() else [] , x
+		| [x] -> if String.length x = 0 || not (x.[0] = '_' || (x.[0] >= 'A' && x.[0] <= 'Z')) || invalid_char x then error() else [] , x
 		| x :: l ->
 			if String.length x = 0 || x.[0] < 'a' || x.[0] > 'z' || invalid_char x then error() else
 				let path , name = loop l in
 				x :: path , name
 	in
 	loop cl
+
+let unique l =
+	let rec _unique = function
+		| [] -> []
+		| x1 :: x2 :: l when x1 = x2 -> _unique (x2 :: l)
+		| x :: l -> x :: _unique l
+	in
+	_unique (List.sort compare l)
 
 let rec read_type_path com p =
 	let classes = ref [] in
@@ -162,12 +170,7 @@ let rec read_type_path com p =
 			loop path p
 		) (extract());
 	) com.swf_libs;
-	let rec unique = function
-		| [] -> []
-		| x1 :: x2 :: l when x1 = x2 -> unique (x2 :: l)
-		| x :: l -> x :: unique l
-	in
-	unique (List.sort compare (!packages)), unique (List.sort compare (!classes))
+	unique !packages, unique !classes
 
 let delete_file f = try Sys.remove f with _ -> ()
 
@@ -211,7 +214,7 @@ let rec process_params acc = function
 
 and init params =
 	let usage = Printf.sprintf
-		"haXe Compiler %d.%.2d - (c)2005-2010 Motion-Twin\n Usage : haxe%s -main <class> [-swf9|-swf|-js|-neko|-php|-cpp|-as3] <output> [options]\n Options :"
+		"haXe Compiler %d.%.2d - (c)2005-2010 Motion-Twin\n Usage : haxe%s -main <class> [-swf|-js|-neko|-php|-cpp|-as3] <output> [options]\n Options :"
 		(version / 100) (version mod 100) (if Sys.os_type = "Win32" then ".exe" else "")
 	in
 	let classes = ref [([],"Std")] in
@@ -221,6 +224,9 @@ try
 	let swf_header = ref None in
 	let cmds = ref [] in
 	let excludes = ref [] in
+	let included_packages = ref [] in
+	let excluded_packages = ref [] in
+	let config_macros = ref [] in
 	let libs = ref [] in
 	let has_error = ref false in
 	let gen_as3 = ref false in
@@ -275,13 +281,9 @@ try
 		),"<path> : add a directory to find source files");
 		("-js",Arg.String (set_platform Js),"<file> : compile code to JavaScript file");
 		("-swf",Arg.String (set_platform Flash),"<file> : compile code to Flash SWF file");
-		("-swf9",Arg.String (fun file ->
-			set_platform Flash file;
-			if com.flash_version < 9 then com.flash_version <- 9;
-		),"<file> : compile code to Flash9 SWF file");
 		("-as3",Arg.String (fun dir ->
 			set_platform Flash dir;
-			if com.flash_version < 9 then com.flash_version <- 9;
+			if com.flash_version < 9. then com.flash_version <- 9.;
 			gen_as3 := true;
 			Common.define com "as3";
 			Common.define com "no_inline";
@@ -323,7 +325,7 @@ try
 		), ": add debug informations to the compiled code");
 	] in
 	let adv_args_spec = [
-		("-swf-version",Arg.Int (fun v ->
+		("-swf-version",Arg.Float (fun v ->
 			com.flash_version <- v;
 		),"<version> : change the SWF version (6 to 10)");
 		("-swf-header",Arg.String (fun h ->
@@ -386,6 +388,14 @@ try
 				if l = "" then ([],"") else Ast.parse_path l
 			) lines) @ !excludes;
 		),"<filename> : don't generate code for classes listed in this file");
+		("-exclude-package",Arg.String(fun package ->
+			let l = ExtString.String.strip package in
+			if l = "" then () else excluded_packages := l :: !excluded_packages
+		),"<package> : excludes all the modules defined in the package");
+		("-include-package",Arg.String(fun package ->
+			let l = ExtString.String.strip package in
+			if l = "" then () else included_packages := l :: !included_packages
+		),"<package> : includes all the modules defined in the package");
 		("-prompt", Arg.Unit (fun() -> prompt := true),": prompt on error");
 		("-cmd", Arg.String (fun cmd ->
 			cmds := expand_env cmd :: !cmds
@@ -394,10 +404,11 @@ try
 		("--no-traces", define "no_traces", ": don't compile trace calls in the program");
 		("--flash-use-stage", define "flash_use_stage", ": place objects found on the stage of the SWF lib");
 		("--neko-source", define "neko_source", ": keep generated neko source");
-		("--gen-hx-classes", Arg.String (fun file ->
-			com.file <- file;
-			Genas3.genhx com;
-			did_something := true;
+		("--gen-hx-classes", Arg.Unit (fun() ->
+			List.iter (fun (_,_,extract) ->
+				Hashtbl.iter (fun n _ -> classes := n :: !classes) (extract())				
+			) com.swf_libs;
+			xml_out := Some "hx"
 		),"<file> : generate hx headers from SWF9 file");
 		("--next", Arg.Unit (fun() -> assert false), ": separate several haxe compilations");
 		("--display", Arg.String (fun file_pos ->
@@ -429,6 +440,10 @@ try
 			if com.php_front <> None then raise (Arg.Bad "Multiple --php-front");
 			com.php_front <- Some f;
 		),"<filename> : select the name for the php front file");
+		("--php-lib",Arg.String (fun f ->
+ 			if com.php_lib <> None then raise (Arg.Bad "Multiple --php-lib");
+ 			com.php_lib <- Some f;
+ 		),"<filename> : select the name for the php lib folder");  
 		("--js-namespace",Arg.String (fun f ->
 			if com.js_namespace <> None then raise (Arg.Bad "Multiple --js-namespace");
 			com.js_namespace <- Some f;
@@ -444,6 +459,16 @@ try
 			no_output := true;
 			interp := true;
 		),": interpret the program using internal macro system");
+		("--macro", Arg.String (fun e ->
+			config_macros := e :: !config_macros
+		)," : call the given macro before typing anything else");
+		("--dead-code-elimination", Arg.Unit (fun () ->
+			com.dead_code_elimination <- true
+		)," : remove unused methods");
+		("-swf9",Arg.String (fun file ->
+			set_platform Flash file;
+			if com.flash_version < 9. then com.flash_version <- 9.;
+		),"<file> : [deprecated] compile code to Flash9 SWF file");
 	] in
 	let current = ref 0 in
 	let args = Array.of_list ("" :: params) in
@@ -499,32 +524,59 @@ try
 			set_platform Cross "";
 			"?"
 		| Flash | Flash9 ->
-			Common.define com ("flash" ^ string_of_int com.flash_version);
-			if com.flash_version >= 9 then begin
-				Common.define com "flash9"; (* always define flash9, even for flash10+ *)
+			if com.flash_version >= 9. then begin
+				let rec loop = function
+					| [] -> ()
+					| v :: _ when v > com.flash_version -> ()
+					| v :: l ->
+						let maj = int_of_float v in
+						let min = int_of_float (mod_float (v *. 10.) 10.) in
+						let def = "flash" ^ string_of_int maj ^ (if min = 0 then "" else "_" ^ string_of_int min) in
+						Common.define com def;
+						loop l
+				in
+				loop [9.;10.;10.1;10.2;11.];
 				com.package_rules <- PMap.add "flash" (Directory "flash9") com.package_rules;
 				com.package_rules <- PMap.add "flash9" Forbidden com.package_rules;
 				com.platform <- Flash9;
 				add_std "flash9";
-			end else
+			end else begin
+				Common.define com ("flash" ^ string_of_int (int_of_float com.flash_version));
 				add_std "flash";
+			end;
 			"swf"
 		| Neko -> add_std "neko"; "n"
 		| Js -> add_std "js"; "js"
 		| Php -> add_std "php"; "php"
 		| Cpp -> add_std "cpp"; "cpp"
 	) in
+	
+	let append_modules lst packages =
+		packages := unique !packages;
+		List.iter (fun p ->
+			let path = String.concat "/" (ExtString.String.nsplit p ".") in
+			let _, modules = read_type_path com [path] in
+			let pkg = (match p with "." -> [] | _ -> ExtString.String.nsplit p ".") in
+			List.iter (fun c -> lst := (pkg, c) :: !lst) modules;
+		) !packages;
+		unique !lst;		
+	in
+	
+	classes := append_modules classes included_packages;
+	excludes := append_modules excludes excluded_packages;
+	
 	(* check file extension. In case of wrong commandline, we don't want
 		to accidentaly delete a source file. *)
 	if not !no_output && file_extension com.file = ext then delete_file com.file;
 	List.iter (fun f -> f()) (List.rev (!pre_compilation));
-	if !classes = [([],"Std")] then begin
+	if !classes = [([],"Std")] && !config_macros = [] then begin
 		if !cmds = [] && not !did_something then Arg.usage basic_args_spec usage;
 	end else begin
 		if com.verbose then print_endline ("Classpath : " ^ (String.concat ";" com.class_path));
 		let t = Common.timer "typing" in
 		Typecore.type_expr_ref := (fun ctx e need_val -> Typer.type_expr ~need_val ctx e);
 		let ctx = Typer.create com in
+		List.iter (Typer.call_init_macro ctx) (List.rev !config_macros);
 		List.iter (fun cpath -> ignore(ctx.Typecore.g.Typecore.do_load_module ctx cpath Ast.null_pos)) (List.rev !classes);
 		Typer.finalize ctx;
 		t();
@@ -548,7 +600,7 @@ try
 		(match com.platform with
 		| Cross ->
 			if !interp then begin
-				let ctx = Interp.create com in
+				let ctx = Interp.create com (Typer.make_macro_api ctx Ast.null_pos) in
 				Interp.add_types ctx com.types;
 			end;
 		| Flash | Flash9 when !gen_as3 ->
@@ -572,6 +624,8 @@ try
 		);
 		(match !xml_out with
 		| None -> ()
+		| Some "hx" ->
+			Genxml.generate_hx com
 		| Some file ->
 			if com.verbose then print_endline ("Generating xml : " ^ com.file);
 			Genxml.generate com file);
@@ -648,6 +702,7 @@ with
 
 ;;
 let all = Common.timer "other" in
+Sys.catch_break true;
 process_params [] (List.tl (Array.to_list Sys.argv));
 all();
 if !measure_times then begin

@@ -24,7 +24,7 @@
  */
 package flash;
 
-class Boot extends flash.display.MovieClip, implements Dynamic {
+@:keep class Boot extends flash.display.MovieClip, implements Dynamic {
 
 	static var init : Void -> Void;
 	static var tf : flash.text.TextField;
@@ -76,14 +76,33 @@ class Boot extends flash.display.MovieClip, implements Dynamic {
 		lines = new Array();
 		var c = if( mc == null ) this else mc;
 		flash.Lib.current = c;
+		if( init != null )
+			start();
+	}
+
+	function start() {
+		var c = flash.Lib.current;
 		try {
 			untyped if( c.stage != null && c.stage.align == "" )
 				c.stage.align = "TOP_LEFT";
 		} catch( e : Dynamic ) {
 			// security error when loading from different domain
 		}
-		if( init != null )
+		#if (dontWaitStage || swc)
 			init();
+		#else
+			if( c.stage == null )
+				c.addEventListener(flash.events.Event.ADDED_TO_STAGE, doInitDelay);
+			else if( c.stage.stageWidth == 0 )
+				untyped __global__["flash.utils.setTimeout"](start,1);
+			else
+				init();
+		#end
+	}
+
+	function doInitDelay(_) {
+		flash.Lib.current.removeEventListener(flash.events.Event.ADDED_TO_STAGE, doInitDelay);
+		start();
 	}
 
 	public static function enum_to_string( e : { tag : String, params : Array<Dynamic> } ) {
@@ -108,7 +127,7 @@ class Boot extends flash.display.MovieClip, implements Dynamic {
 	public static function __clear_trace() {
 		if( tf == null )
 			return;
-		flash.Lib.current.removeChild(tf);
+		tf.parent.removeChild(tf);
 		tf = null;
 		lines = new Array();
 	}
@@ -129,7 +148,10 @@ class Boot extends flash.display.MovieClip, implements Dynamic {
 			tf.autoSize = flash.text.TextFieldAutoSize.LEFT;
 			tf.mouseEnabled = false;
 		}
-		mc.addChild(tf); // on top
+		if( mc.stage == null )
+			mc.addChild(tf);
+		else
+			mc.stage.addChild(tf); // on top
 		return tf;
 	}
 

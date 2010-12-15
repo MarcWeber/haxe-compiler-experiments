@@ -50,6 +50,23 @@ let concat e1 e2 =
 	) in
 	mk e e2.etype (punion e1.epos e2.epos)
 
+let type_constant com c p =
+	let t = com.basic in
+	match c with
+	| Int s ->
+		if String.length s > 10 && String.sub s 0 2 = "0x" then error "Invalid hexadecimal integer" p;
+		(try
+			mk (TConst (TInt (Int32.of_string s))) t.tint p
+		with
+			_ -> mk (TConst (TFloat s)) t.tfloat p)
+	| Float f -> mk (TConst (TFloat f)) t.tfloat p
+	| String s -> mk (TConst (TString s)) t.tstring p
+	| Ident "true" -> mk (TConst (TBool true)) t.tbool p
+	| Ident "false" -> mk (TConst (TBool false)) t.tbool p
+	| Ident "null" -> mk (TConst TNull) (t.tnull (mk_mono())) p
+	| Ident t | Type t -> error ("Invalid constant :  " ^ t) p
+	| Regexp _ -> error "Invalid constant" p
+
 (* -------------------------------------------------------------------------- *)
 (* REMOTING PROXYS *)
 
@@ -71,25 +88,25 @@ let extend_remoting ctx c t p async prot =
 	let decls = (try Typeload.parse_module ctx path p with e -> ctx.com.package_rules <- rules; raise e) in
 	ctx.com.package_rules <- rules;
 	let base_fields = [
-		(FVar ("__cnx",None,[],[],Some (CTPath { tpackage = ["haxe";"remoting"]; tname = if async then "AsyncConnection" else "Connection"; tparams = []; tsub = None }),None),p);
-		(FFun ("new",None,[],[APublic],[],{ f_args = ["c",false,None,None]; f_type = None; f_expr = (EBinop (OpAssign,(EConst (Ident "__cnx"),p),(EConst (Ident "c"),p)),p) }),p);
+		{ cff_name = "__cnx"; cff_pos = p; cff_doc = None; cff_meta = []; cff_access = []; cff_kind = FVar (Some (CTPath { tpackage = ["haxe";"remoting"]; tname = if async then "AsyncConnection" else "Connection"; tparams = []; tsub = None }),None) };
+		{ cff_name = "new"; cff_pos = p; cff_doc = None; cff_meta = []; cff_access = [APublic]; cff_kind = FFun ([],{ f_args = ["c",false,None,None]; f_type = None; f_expr = (EBinop (OpAssign,(EConst (Ident "__cnx"),p),(EConst (Ident "c"),p)),p) }) };
 	] in
 	let tvoid = CTPath { tpackage = []; tname = "Void"; tparams = []; tsub = None } in
-	let build_field is_public acc (f,p) =
-		match f with
-		| FFun ("new",_,_,_,_,_) ->
+	let build_field is_public acc f =
+		if f.cff_name = "new" then
 			acc
-		| FFun (name,doc,meta,acl,pl,f) when (is_public || List.mem APublic acl) && not (List.mem AStatic acl) ->
-			if List.exists (fun (_,_,t,_) -> t = None) f.f_args then error ("Field " ^ name ^ " type is not complete and cannot be used by RemotingProxy") p;
-			let eargs = [EArrayDecl (List.map (fun (a,_,_,_) -> (EConst (Ident a),p)) f.f_args),p] in
-			let ftype = (match f.f_type with Some (CTPath { tpackage = []; tname = "Void" }) -> None | _ -> f.f_type) in
+		else match f.cff_kind with
+		| FFun (pl,fd) when (is_public || List.mem APublic f.cff_access) && not (List.mem AStatic f.cff_access) ->
+			if List.exists (fun (_,_,t,_) -> t = None) fd.f_args then error ("Field " ^ f.cff_name ^ " type is not complete and cannot be used by RemotingProxy") p;
+			let eargs = [EArrayDecl (List.map (fun (a,_,_,_) -> (EConst (Ident a),p)) fd.f_args),p] in
+			let ftype = (match fd.f_type with Some (CTPath { tpackage = []; tname = "Void" }) -> None | _ -> fd.f_type) in
 			let fargs, eargs = if async then match ftype with
-				| Some tret -> f.f_args @ ["__callb",true,Some (CTFunction ([tret],tvoid)),None], eargs @ [EConst (Ident "__callb"),p]
-				| _ -> f.f_args, eargs @ [EConst (Ident "null"),p]
+				| Some tret -> fd.f_args @ ["__callb",true,Some (CTFunction ([tret],tvoid)),None], eargs @ [EConst (Ident "__callb"),p]
+				| _ -> fd.f_args, eargs @ [EConst (Ident "null"),p]
 			else
-				f.f_args, eargs
+				fd.f_args, eargs
 			in
-			let id = (EConst (String name), p) in
+			let id = (EConst (String f.cff_name), p) in
 			let id = if prot then id else ECall ((EConst (Ident "__unprotect__"),p),[id]),p in
 			let expr = ECall (
 				(EField (
@@ -98,12 +115,12 @@ let extend_remoting ctx c t p async prot =
 				,p),eargs),p
 			in
 			let expr = if async || ftype = None then expr else (EReturn (Some expr),p) in
-			let f = {
+			let fd = {
 				f_args = fargs;
 				f_type = if async then None else ftype;
 				f_expr = (EBlock [expr],p);
 			} in
-			(FFun (name,None,[],[APublic],pl,f),p) :: acc
+			{ cff_name = f.cff_name; cff_pos = p; cff_doc = None; cff_meta = []; cff_access = [APublic]; cff_kind = FFun (pl,fd) } :: acc
 		| _ -> acc
 	in
 	let decls = List.map (fun d ->
@@ -265,22 +282,41 @@ let build_metadata com t =
 	let api = com.basic in
 	let p, meta, fields, statics = (match t with
 		| TClassDecl c ->
-			let fields = List.map (fun f -> f.cf_name,f.cf_meta()) (c.cl_ordered_fields @ (match c.cl_constructor with None -> [] | Some f -> [{ f with cf_name = "_" }])) in
-			let statics =  List.map (fun f -> f.cf_name,f.cf_meta()) c.cl_ordered_statics in
-			(c.cl_pos, ["",c.cl_meta()],fields,statics)
+			let fields = List.map (fun f -> f.cf_name,f.cf_meta) (c.cl_ordered_fields @ (match c.cl_constructor with None -> [] | Some f -> [{ f with cf_name = "_" }])) in
+			let statics =  List.map (fun f -> f.cf_name,f.cf_meta) c.cl_ordered_statics in
+			(c.cl_pos, ["",c.cl_meta],fields,statics)
 		| TEnumDecl e ->
-			(e.e_pos, ["",e.e_meta()],List.map (fun n -> n, (PMap.find n e.e_constrs).ef_meta()) e.e_names, [])
+			(e.e_pos, ["",e.e_meta],List.map (fun n -> n, (PMap.find n e.e_constrs).ef_meta) e.e_names, [])
 		| TTypeDecl t ->
-			(t.t_pos, ["",t.t_meta()],(match follow t.t_type with TAnon a -> PMap.fold (fun f acc -> (f.cf_name,f.cf_meta()) :: acc) a.a_fields [] | _ -> []),[])
+			(t.t_pos, ["",t.t_meta],(match follow t.t_type with TAnon a -> PMap.fold (fun f acc -> (f.cf_name,f.cf_meta) :: acc) a.a_fields [] | _ -> []),[])
 	) in
-	let filter l = 
+	let filter l =
 		let l = List.map (fun (n,ml) -> n, List.filter (fun (m,_) -> m.[0] <> ':') ml) l in
 		List.filter (fun (_,ml) -> ml <> []) l
 	in
 	let meta, fields, statics = filter meta, filter fields, filter statics in
+	let rec loop (e,p) =
+		match e with
+		| EConst c ->
+			type_constant com c p
+		| EParenthesis e ->
+			loop e
+		| EObjectDecl el ->
+			mk (TObjectDecl (List.map (fun (n,e) -> n, loop e) el)) (TAnon { a_fields = PMap.empty; a_status = ref Closed }) p
+		| EArrayDecl el ->
+			mk (TArrayDecl (List.map loop el)) (com.basic.tarray t_dynamic) p
+		| EUnop (Neg, Prefix, e) ->
+			let e = loop e in
+			(match e.eexpr with
+			| TConst (TInt i) -> { e with eexpr = TConst (TInt (Int32.neg i)) }
+			| TConst (TFloat f) -> { e with eexpr = TConst (TFloat ("-" ^ f)) }
+			| _ -> error "Metadata should be constant" p)
+		| _ ->
+			error "Metadata should be constant" p
+	in
 	let make_meta_field ml =
-		mk (TObjectDecl (List.map (fun (f,l) -> 
-			f, mk (match l with [] -> TConst TNull | _ -> TArrayDecl l) (api.tarray t_dynamic) p
+		mk (TObjectDecl (List.map (fun (f,el) ->
+			f, mk (match el with [] -> TConst TNull | _ -> TArrayDecl (List.map loop el)) (api.tarray t_dynamic) p
 		) ml)) (api.tarray t_dynamic) p
 	in
 	let make_meta l =
@@ -290,10 +326,10 @@ let build_metadata com t =
 		None
 	else
 		let meta_obj = [] in
-		let meta_obj = (if fields = [] then meta_obj else ("fields",make_meta fields) :: meta_obj) in		
+		let meta_obj = (if fields = [] then meta_obj else ("fields",make_meta fields) :: meta_obj) in
 		let meta_obj = (if statics = [] then meta_obj else ("statics",make_meta statics) :: meta_obj) in
 		let meta_obj = (try ("obj", make_meta_field (List.assoc "" meta)) :: meta_obj with Not_found -> meta_obj) in
-		Some (mk (TObjectDecl meta_obj) t_dynamic p)		
+		Some (mk (TObjectDecl meta_obj) t_dynamic p)
 
 (* -------------------------------------------------------------------------- *)
 (* API EVENTS *)
@@ -351,15 +387,13 @@ let rec has_rtti c =
 let on_generate ctx t =
 	match t with
 	| TClassDecl c ->
-		let meta = ref (c.cl_meta()) in
 		List.iter (fun m ->
 			match m with
-			| ":native",[{ eexpr = TConst (TString name) } as e] ->				
-				meta := (":real",[{ e with eexpr = TConst (TString (s_type_path c.cl_path)) }]) :: !meta;
-				c.cl_meta <- (fun() -> !meta);
+			| ":native",[Ast.EConst (Ast.String name),p] ->
+				c.cl_meta <- (":real",[Ast.EConst (Ast.String (s_type_path c.cl_path)),p]) :: c.cl_meta;
 				c.cl_path <- parse_path name;
 			| _ -> ()
-		) (!meta);
+		) c.cl_meta;
 		if has_rtti c && not (PMap.mem "__rtti" c.cl_statics) then begin
 			let f = mk_field "__rtti" ctx.t.tstring in
 			let str = Genxml.gen_type_string ctx.com t in
@@ -369,14 +403,14 @@ let on_generate ctx t =
 		end;
 		if not ctx.in_macro then List.iter (fun f ->
 			match f.cf_kind with
-			| Method MethMacro -> 
+			| Method MethMacro ->
 				c.cl_statics <- PMap.remove f.cf_name c.cl_statics;
 				c.cl_ordered_statics <- List.filter (fun f2 -> f != f2) c.cl_ordered_statics;
 			| _ -> ()
 		) c.cl_ordered_statics;
 		(match build_metadata ctx.com t with
 		| None -> ()
-		| Some e -> 
+		| Some e ->
 			let f = mk_field "__meta__" t_dynamic in
 			f.cf_expr <- Some e;
 			c.cl_ordered_statics <- f :: c.cl_ordered_statics;
@@ -1015,7 +1049,12 @@ let rec is_volatile t =
 
 let set_default ctx a c t p =
 	let ve = mk (TLocal a) t p in
-	mk (TIf (mk (TBinop (OpEq,ve,mk (TConst TNull) t p)) ctx.basic.tbool p, mk (TBinop (OpAssign,ve,mk (TConst c) t p)) t p,None)) ctx.basic.tvoid p
+	let cond =  match ctx.platform with
+		| Js -> TCall (mk (TLocal "__js__") t_dynamic p,[mk (TConst (TString (a ^ "=== undefined"))) ctx.basic.tstring p])
+		| Flash -> TCall (mk (TLocal "__physeq__") t_dynamic p,[ve;mk (TCall (mk (TLocal "__undefined__") t_dynamic p,[])) t_dynamic p])
+		| _ -> TBinop (OpEq,ve,mk (TConst TNull) t p)
+	in
+	mk (TIf (mk cond ctx.basic.tbool p, mk (TBinop (OpAssign,ve,mk (TConst c) t p)) t p,None)) ctx.basic.tvoid p
 
 let bytes_serialize data =
 	let b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%:" in
@@ -1108,7 +1147,7 @@ let default_cast ?(vtmp="$t") com e texpr t p =
 		| TClassDecl c -> TAnon { a_fields = PMap.empty; a_status = ref (Statics c) }
 		| TEnumDecl e -> TAnon { a_fields = PMap.empty; a_status = ref (EnumStatics e) }
 		| TTypeDecl _ -> assert false
-	in	
+	in
 	let var = mk (TVars [(vtmp,e.etype,Some e)]) api.tvoid p in
 	let vexpr = mk (TLocal vtmp) e.etype p in
 	let texpr = mk (TTypeExpr texpr) (mk_texpr texpr) p in

@@ -768,7 +768,7 @@ let gen_access ctx e (forset : 'a) : 'a access =
 		let id, k, closure = property ctx f e1.etype in
 		if closure && not ctx.for_call then error "In Flash9, this method cannot be accessed this way : please define a local function" e1.epos;
 		(match e1.eexpr with
-		| TConst TThis when not ctx.in_static -> 
+		| TConst TThis when not ctx.in_static ->
 			use_var ctx f e.epos;
 			write ctx (HFindProp id)
 		| _ -> gen_expr ctx true e1);
@@ -1748,14 +1748,31 @@ let generate_enum_init ctx e hc meta =
 	);
 	free_reg ctx r
 
+let extract_meta meta =
+	let rec loop = function
+		| [] -> []
+		| (":meta",[ECall ((EConst (Ident n | Type n),_),args),_]) :: l ->
+			let mk_arg (a,p) =
+				match a with
+				| EConst (String s) -> (None, s)
+				| EBinop (OpAssign,(EConst (Ident n | Type n),_),(EConst (String s),_)) -> (Some n, s)
+				| _ -> error "Invalid meta definition" p
+			in
+			{ hlmeta_name = n; hlmeta_data = Array.of_list (List.map mk_arg args) } :: loop l
+		| _ :: l -> loop l
+	in
+	match loop meta with
+	| [] -> None
+	| l -> Some (Array.of_list l)
+
 let generate_field_kind ctx f c stat =
 	match f.cf_expr with
 	| Some { eexpr = TFunction fdata } ->
-		let rec loop c =
+		let rec loop c name =
 			match c.cl_super with
 			| None -> false
 			| Some (c,_) ->
-				PMap.exists f.cf_name c.cl_fields || loop c
+				PMap.exists name c.cl_fields || loop c name
 		in
 		(match f.cf_kind with
 		| Var _ | Method MethDynamic ->
@@ -1765,11 +1782,18 @@ let generate_field_kind ctx f c stat =
 				hlv_const = false;
 			})
 		| _ ->
+			let rec lookup_kind = function
+				| [] -> f.cf_name, MK3Normal
+				| (":getter",[EConst (Ident f | Type f),_]) :: _ -> f, MK3Getter
+				| (":setter",[EConst (Ident f | Type f),_]) :: _ -> f, MK3Setter
+				| _ :: l -> lookup_kind l
+			in
+			let name, kind = lookup_kind f.cf_meta in
 			Some (HFMethod {
 				hlm_type = generate_method ctx fdata stat;
 				hlm_final = stat;
-				hlm_override = not stat && loop c;
-				hlm_kind = MK3Normal;
+				hlm_override = not stat && loop c name;
+				hlm_kind = kind;
 			})
 		);
 	| _ when c.cl_interface && not stat ->
@@ -1819,21 +1843,21 @@ let generate_class ctx c =
 		| None -> acc
 		| Some k ->
 			let rec find_meta c =
-				match c.cl_super with
-				| None -> []
-				| Some (c,_) ->
-					try
-						let f = PMap.find f.cf_name c.cl_fields in
-						if List.mem f.cf_name c.cl_overrides then raise Not_found;
-						f.cf_meta()
-					with Not_found ->
-						find_meta c
+				try
+					let f = PMap.find f.cf_name c.cl_fields in
+					if List.mem f.cf_name c.cl_overrides then raise Not_found;
+					f.cf_meta
+				with Not_found ->
+					match c.cl_super with
+					| None -> []
+					| Some (c,_) -> find_meta c
 			in
 			let rec loop_meta = function
 				| [] -> ident f.cf_name
 				| x :: l ->
 					match x with
-					| (":ns",[{ eexpr = TConst (TString ns) }]) -> HMName (f.cf_name,HNNamespace ns)
+					| ((":getter" | ":setter"),[EConst (Ident f | Type f),_]) -> ident f
+					| (":ns",[EConst (String ns),_]) -> HMName (f.cf_name,HNNamespace ns)
 					| (":protected",[]) ->
 						let p = (match c.cl_path with [], n -> n | p, n -> String.concat "." p ^ ":" ^ n) in
 						has_protected := Some p;
@@ -1849,7 +1873,7 @@ let generate_class ctx c =
 				hlf_name = name;
 				hlf_slot = 0;
 				hlf_kind = k;
-				hlf_metas = None;
+				hlf_metas = extract_meta f.cf_meta;
 			} :: acc
 	) c.cl_fields []) in
 	let st_field_count = ref 0 in
@@ -1884,7 +1908,7 @@ let generate_class ctx c =
 				hlf_name = ident f.cf_name;
 				hlf_slot = !count;
 				hlf_kind = k;
-				hlf_metas = None;
+				hlf_metas = extract_meta f.cf_meta;
 			}
 		) c.cl_ordered_statics);
 	}
