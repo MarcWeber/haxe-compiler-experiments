@@ -298,10 +298,13 @@ let usage =
 	"install.ml: automatically fetches required sources and builds HaXe.\n"
       ^ "You can run install.ml alone - or run it within the HaXe source repository \n"
       ^ "\n"
-      ^ " --actions names : only run actions\n"
+      ^ " --actions names : only run given actions (must be separated by ',' without space)\n"
       ^ "\n"
-      ^ "default actions :" ^ (String.concat ", " default_actions) ^ "\n"
-      ^ "available actions: " ^ (String.concat ", " all_actions) ^ "\n";;
+      ^ "default actions   : " ^ (String.concat "," default_actions) ^ "\n"
+      ^ "available actions : " ^ (String.concat ", " all_actions) ^ "\n"
+      ^ "\n"
+      ^ "The ocamake target creates / updates the makefile.\n"
+      ^ "Unfortunately make -j4 is not much faster\n";;
 
 (* -- parse arguments -- *)
 Arg.parse arg_spec (fun arg -> argfiles := arg :: !argfiles) usage;;
