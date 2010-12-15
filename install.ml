@@ -134,7 +134,7 @@ let libs = [
         "ocaml/xml-light/xml-light";
         "unix";
         "str"
-] @ (match !pa_deriving_lib with | None -> [] | Some f -> [f])
+]
 let neko = "neko/libs/include/ocaml"
 let paths = [
         "ocaml";
