@@ -36,6 +36,7 @@ and var_access =
 	| AccResolve		(* call resolve("field") when accessed *)
 	| AccCall of string (* perform a method call when accessed *)
 	| AccInline			(* similar to Normal but inline when accessed *)
+	| AccRequire of string (* set when @:require(cond) fails *)
 
 and method_kind =
 	| MethNormal
@@ -110,7 +111,7 @@ and texpr_expr =
 	| TBreak
 	| TContinue
 	| TThrow of texpr
-	| TCast of texpr * module_type option	
+	| TCast of texpr * module_type option
 
 and texpr = {
 	eexpr : texpr_expr;
@@ -123,8 +124,8 @@ and tclass_field = {
 	mutable cf_type : t;
 	cf_public : bool;
 	mutable cf_doc : Ast.documentation;
-	cf_meta : metadata;
-	cf_kind : field_kind;
+	mutable cf_meta : metadata;
+	mutable cf_kind : field_kind;
 	cf_params : (string * t) list;
 	mutable cf_expr : texpr option;
 }
@@ -137,7 +138,7 @@ and tclass_kind =
 	| KGeneric
 	| KGenericInstance of tclass * tparams
 
-and metadata = unit -> (string * texpr list) list
+and metadata = Ast.metadata
 
 and tclass = {
 	mutable cl_path : path;
@@ -167,16 +168,16 @@ and tenum_field = {
 	ef_type : t;
 	ef_pos : Ast.pos;
 	ef_doc : Ast.documentation;
-	ef_meta : metadata;
 	ef_index : int;
+	mutable ef_meta : metadata;
 }
 
 and tenum = {
 	e_path : path;
 	e_pos : Ast.pos;
 	e_doc : Ast.documentation;
-	e_meta : metadata;
 	e_private : bool;
+	mutable e_meta : metadata;
 	mutable e_extern : bool;
 	mutable e_types : (string * t) list;
 	mutable e_constrs : (string , tenum_field) PMap.t;
@@ -187,8 +188,8 @@ and tdef = {
 	t_path : path;
 	t_pos : Ast.pos;
 	t_doc : Ast.documentation;
-	t_meta : metadata;
 	t_private : bool;
+	mutable t_meta : metadata;
 	mutable t_types : (string * t) list;
 	mutable t_type : t;
 }
@@ -225,7 +226,7 @@ let mk_class path pos =
 		cl_path = path;
 		cl_pos = pos;
 		cl_doc = None;
-		cl_meta = (fun() -> []);
+		cl_meta = [];
 		cl_private = false;
 		cl_kind = KNormal;
 		cl_extern = false;
@@ -244,7 +245,7 @@ let mk_class path pos =
 		cl_overrides = [];
 	}
 
-let null_class = 
+let null_class =
 	let c = mk_class ([],"") Ast.null_pos in
 	c.cl_private <- true;
 	c
@@ -322,6 +323,7 @@ let s_access = function
 	| AccResolve -> "resolve"
 	| AccCall m -> m
 	| AccInline	-> "inline"
+	| AccRequire n -> "require " ^ n
 
 let s_kind = function
 	| Var { v_read = AccNormal; v_write = AccNormal } -> "var"
@@ -339,45 +341,6 @@ let rec is_parent csup c =
 	else match c.cl_super with
 		| None -> false
 		| Some (c,_) -> is_parent csup c
-
-let rec link e a b =
-	(* tell if a is is b *)
-	let rec loop t =
-		if t == a then
-			true
-		else match t with
-		| TMono t -> (match !t with None -> false | Some t -> loop t)
-		| TEnum (e,tl) -> e.e_path = ([],"Protected") || List.exists loop tl
-		| TInst (_,tl) | TType (_,tl) -> List.exists loop tl
-		| TFun (tl,t) -> List.exists (fun (_,_,t) -> loop t) tl || loop t
-		| TDynamic t2 ->
-			if t == t2 then
-				false
-			else
-				loop t2
-		| TLazy f ->
-			loop (!f())
-		| TAnon a ->
-			try
-				PMap.iter (fun _ f -> if loop f.cf_type then raise Exit) a.a_fields;
-				false
-			with
-				Exit -> true
-	in
-	(* tell if a ~= b *)
-	let rec loop2 t =
-		if t == a then
-			true
-		else match t with
-		| TMono t -> (match !t with None -> false | Some t -> loop2 t)
-		| _ -> false
-	in
-	if loop b then
-		loop2 b
-	else
-		match b with
-		| TDynamic _ -> true
-		| _ -> e := Some b; true
 
 let map loop t =
 	match t with
@@ -486,6 +449,38 @@ let rec follow t =
 		follow (apply_params t.t_types tl t.t_type)
 	| _ -> t
 
+let rec link e a b =
+	(* tell if setting a == b will create a type-loop *)
+	let rec loop t =
+		if t == a then
+			true
+		else match t with
+		| TMono t -> (match !t with None -> false | Some t -> loop t)
+		| TEnum (_,tl) -> List.exists loop tl
+		| TInst (_,tl) | TType (_,tl) -> List.exists loop tl
+		| TFun (tl,t) -> List.exists (fun (_,_,t) -> loop t) tl || loop t
+		| TDynamic t2 ->
+			if t == t2 then
+				false
+			else
+				loop t2
+		| TLazy f ->
+			loop (!f())
+		| TAnon a ->
+			try
+				PMap.iter (fun _ f -> if loop f.cf_type then raise Exit) a.a_fields;
+				false
+			with
+				Exit -> true
+	in
+	(* tell is already a ~= b *)
+	if loop b then
+		(follow b) == a
+	else
+		match b with
+		| TDynamic _ -> true
+		| _ -> e := Some b; true
+
 let monomorphs eparams t =
 	apply_params eparams (List.map (fun _ -> mk_mono()) eparams) t
 
@@ -528,8 +523,8 @@ let invalid_visibility n = Invalid_visibility n
 let has_no_field t n = Has_no_field (t,n)
 let has_extra_field t n = Has_extra_field (t,n)
 let error l = raise (Unify_error l)
-let has_meta m ml = List.mem (m,[]) (ml())
-let no_meta() = []
+let has_meta m ml = List.exists (fun (m2,_,_) -> m = m2) ml
+let no_meta = []
 
 (*
 	we can restrict access as soon as both are runtime-compatible
@@ -541,7 +536,7 @@ let unify_access a1 a2 =
 	| _ -> false
 
 let direct_access = function
-	| AccNo | AccNever | AccNormal | AccInline -> true
+	| AccNo | AccNever | AccNormal | AccInline | AccRequire _ -> true
 	| AccResolve | AccCall _ -> false
 
 let unify_kind k1 k2 =
@@ -552,7 +547,7 @@ let unify_kind k1 k2 =
 			| AccNormal, _, MethNormal -> true
 			| AccNormal, AccNormal, MethDynamic -> true
 			| _ -> false)
-		| Method m, Var v -> 
+		| Method m, Var v ->
 			(match m with
 			| MethDynamic -> direct_access v.v_read && direct_access v.v_write
 			| MethMacro -> false
@@ -590,7 +585,7 @@ let rec type_eq param a b =
 		| Some t -> type_eq param a t)
 	| TType (t1,tl1), TType (t2,tl2) when (t1 == t2 || (param = EqCoreType && t1.t_path = t2.t_path)) && List.length tl1 = List.length tl2 ->
 		List.iter2 (type_eq param) tl1 tl2
-	| TType (t,tl) , _ when param <> EqCoreType ->		
+	| TType (t,tl) , _ when param <> EqCoreType ->
 		type_eq param (apply_params t.t_types tl t.t_type) b
 	| _ , TType (t,tl) when param <> EqCoreType ->
 		if List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!eq_stack) then
@@ -710,10 +705,16 @@ let rec unify a b =
 		| None -> if not (link t b a) then error [cannot_unify a b]
 		| Some t -> unify a t)
 	| TType (t,tl) , _ ->
-		(try
-			unify (apply_params t.t_types tl t.t_type) b
-		with
-			Unify_error l -> error (cannot_unify a b :: l))
+		if not (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!unify_stack)) then begin
+			try
+				unify_stack := (a,b) :: !unify_stack;
+				unify (apply_params t.t_types tl t.t_type) b;
+				unify_stack := List.tl !unify_stack;
+			with
+				Unify_error l ->
+					unify_stack := List.tl !unify_stack;
+					error (cannot_unify a b :: l)
+		end
 	| _ , TType (t,tl) ->
 		if not (List.exists (fun (a2,b2) -> fast_eq a a2 && fast_eq b b2) (!unify_stack)) then begin
 			try

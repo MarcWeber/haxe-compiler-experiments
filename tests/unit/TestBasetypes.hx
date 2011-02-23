@@ -44,6 +44,13 @@ class TestBasetypes extends Test {
 		eq( abc[0], "a" );
 		eq( abc[1], "b" );
 		eq( abc[2], "c" );
+		
+		var str = "abc";
+		eq( str.charCodeAt(0), "a".code );
+		eq( str.charCodeAt(1), "b".code );
+		eq( str.charCodeAt(2), "c".code );
+		eq( str.charCodeAt(-1), null );
+		eq( str.charCodeAt(3), null );
 	}
 
 	function testMath() {
@@ -91,6 +98,7 @@ class TestBasetypes extends Test {
 		eq( Std.parseInt("0"), 0 );
 		eq( Std.parseInt("   5"), 5 );
 		eq( Std.parseInt("0001"), 1 );
+		eq( Std.parseInt("0010"), 10 );
 		eq( Std.parseInt("100"), 100 );
 		eq( Std.parseInt("-100"), -100 );
 		eq( Std.parseInt("100x123"), 100 );
@@ -98,6 +106,8 @@ class TestBasetypes extends Test {
 		eq( Std.parseInt("abcd"), null );
 		eq( Std.parseInt("a10"), null );
 		eq( Std.parseInt(null), null );
+		eq( Std.parseInt("0xFF"), 255 );
+		unspec(function() Std.parseInt("0xFG"));
 
 		eq( Std.parseFloat("0"), 0. );
 		eq( Std.parseFloat("   5.3"), 5.3 );
@@ -116,6 +126,17 @@ class TestBasetypes extends Test {
 		eq( StringTools.hex(0xABCDEF,7), "0ABCDEF" );
 		eq( StringTools.hex(-1,8), "FFFFFFFF" );
 		eq( StringTools.hex(-481400000,8), "E34E6B40" );
+	}
+	
+	function testCCA() {
+		var str = "abc";
+		eq( StringTools.fastCodeAt(str, 0), "a".code );
+		eq( StringTools.fastCodeAt(str, 1), "b".code );
+		eq( StringTools.fastCodeAt(str, 2), "c".code );
+		f( StringTools.isEOF(StringTools.fastCodeAt(str, 2)) );
+		t( StringTools.isEOF(StringTools.fastCodeAt(str, 3)) );
+		
+		t( StringTools.isEOF(StringTools.fastCodeAt("", 0)) );
 	}
 
 }

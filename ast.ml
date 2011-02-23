@@ -176,7 +176,7 @@ and expr_def =
 	| ENew of type_path * expr list
 	| EUnop of unop * unop_flag * expr
 	| EVars of (string * complex_type option * expr option) list
-	| EFunction of func
+	| EFunction of string option * func
 	| EBlock of expr list
 	| EFor of string * expr * expr
 	| EIf of expr * expr * expr option
@@ -199,7 +199,7 @@ type type_param = string * type_path list
 
 type documentation = string option
 
-type metadata = (string * expr list) list
+type metadata = (string * expr list * pos) list
 
 type access =
 	| APublic
@@ -209,10 +209,19 @@ type access =
 	| ADynamic
 	| AInline
 
-type class_field =
-	| FVar of string * documentation * metadata * access list * complex_type option * expr option
-	| FFun of string * documentation * metadata * access list * type_param list * func
-	| FProp of string * documentation * metadata * access list * string * string * complex_type
+type class_field_kind =
+	| FVar of complex_type option * expr option
+	| FFun of type_param list * func
+	| FProp of string * string * complex_type
+
+type class_field = {
+	cff_name : string;
+	cff_doc : documentation;
+	cff_pos : pos;
+	mutable cff_meta : metadata;
+	mutable cff_access : access list;
+	mutable cff_kind : class_field_kind;
+}
 
 type enum_flag =
 	| EPrivate
@@ -237,7 +246,7 @@ type ('a,'b) definition = {
 }
 
 type type_def =
-	| EClass of (class_flag, (class_field * pos) list) definition
+	| EClass of (class_flag, class_field list) definition
 	| EEnum of (enum_flag, enum_constructor list) definition
 	| ETypedef of (enum_flag, complex_type) definition
 	| EImport of type_path
@@ -270,7 +279,7 @@ let punion p p2 =
 
 let s_type_path (p,s) = match p with [] -> s | _ -> String.concat "." p ^ "." ^ s
 
-let parse_path s = 
+let parse_path s =
 	match List.rev (ExtString.String.nsplit s ".") with
 	| [] -> failwith "Invalid empty path"
 	| x :: l -> List.rev l, x
@@ -295,6 +304,14 @@ let s_constant = function
 	| Ident s -> s
 	| Type s -> s
 	| Regexp (r,o) -> "~/" ^ r ^ "/"
+
+let s_access = function
+	| APublic -> "public"
+	| APrivate -> "private"
+	| AStatic -> "static"
+	| AOverride -> "override"
+	| ADynamic -> "dynamic"
+	| AInline -> "inline"
 
 let s_keyword = function
 	| Function -> "function"

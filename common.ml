@@ -47,9 +47,11 @@ type basic_types = {
 type context = {
 	(* config *)
 	version : int;
+	mutable display : bool;
 	mutable debug : bool;
 	mutable verbose : bool;
 	mutable foptimize : bool;
+	mutable dead_code_elimination : bool;
 	mutable platform : platform;
 	mutable std_path : string list;
 	mutable class_path : string list;
@@ -60,30 +62,35 @@ type context = {
 	mutable warning : string -> pos -> unit;
 	mutable js_namespace : string option;
 	mutable load_extern_type : (path -> pos -> Ast.package option) list; (* allow finding types which are not in sources *)
+	mutable filters : (unit -> unit) list;
 	(* output *)
 	mutable file : string;
-	mutable flash_version : int;
+	mutable flash_version : float;
 	mutable modules : Type.module_def list;
+	mutable main : Type.texpr option;
 	mutable types : Type.module_type list;
 	mutable resources : (string,string) Hashtbl.t;
 	mutable php_front : string option;
+	mutable php_lib : string option;
 	mutable swf_libs : (string * (unit -> Swf.swf) * (unit -> ((string list * string),As3hl.hl_class) Hashtbl.t)) list;
+	mutable js_gen : (unit -> unit) option;
 	(* typing *)
 	mutable basic : basic_types;
-	mutable lines : Lexer.line_index;
 }
 
 exception Abort of string * Ast.pos
 
-let display = ref false
+let display_default = ref false
 
 let create v =
 	let m = Type.mk_mono() in
 	{
 		version = v;
 		debug = false;
+		display = !display_default;
 		verbose = false;
 		foptimize = true;
+		dead_code_elimination = false;
 		platform = Cross;
 		std_path = [];
 		class_path = [];
@@ -92,12 +99,16 @@ let create v =
 		package_rules = PMap.empty;
 		file = "";
 		types = [];
+		filters = [];
 		modules = [];
-		flash_version = 8;
+		main = None;
+		flash_version = 10.;
 		resources = Hashtbl.create 0;
 		php_front = None;
+		php_lib = None;
 		swf_libs = [];
 		js_namespace = None;
+		js_gen = None;
 		load_extern_type = [];
 		warning = (fun _ _ -> assert false);
 		error = (fun _ _ -> assert false);
@@ -109,8 +120,7 @@ let create v =
 			tnull = (fun _ -> assert false);
 			tstring = m;
 			tarray = (fun _ -> assert false);
-		};
-		lines = Lexer.build_line_index();
+		};		
 	}
 
 let clone com =
@@ -152,6 +162,9 @@ let init_platform com pf =
 let error msg p = raise (Abort (msg,p))
 
 let platform ctx p = ctx.platform = p
+
+let add_filter ctx f =
+	ctx.filters <- f :: ctx.filters
 
 let find_file ctx f =
 	let rec loop = function
