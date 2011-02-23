@@ -32,6 +32,9 @@ let fcall e name el ret p =
 	let ft = tfun (List.map (fun e -> e.etype) el) ret in
 	mk (TCall (field e name ft p,el)) ret p
 
+let mk_parent e =
+	mk (TParenthesis e) e.etype e.epos
+
 let string com str p =
 	mk (TConst (TString str)) com.basic.tstring p
 
@@ -160,6 +163,7 @@ let rec build_generic ctx c p tl =
 		let path = (match follow t with
 			| TInst (c,_) -> c.cl_path
 			| TEnum (e,_) -> e.e_path
+			| TMono _ -> error "Type parameter must be explicit when creating a haxe.rtti.Generic instance" p
 			| _ -> error "Type parameter must be a class or enum instance" p
 		) in
 		match path with
@@ -218,7 +222,7 @@ let rec build_generic ctx c p tl =
 		cg.cl_interface <- c.cl_interface;
 		cg.cl_constructor <- (match c.cl_constructor with None -> None | Some c -> Some (build_field c));
 		cg.cl_implements <- List.map (fun (i,tl) ->
-			(match build_type (TInst (i, List.map build_type tl)) with
+			(match follow (build_type (TInst (i, List.map build_type tl))) with
 			| TInst (i,tl) -> i, tl
 			| _ -> assert false)
 		) c.cl_implements;
@@ -291,7 +295,7 @@ let build_metadata com t =
 			(t.t_pos, ["",t.t_meta],(match follow t.t_type with TAnon a -> PMap.fold (fun f acc -> (f.cf_name,f.cf_meta) :: acc) a.a_fields [] | _ -> []),[])
 	) in
 	let filter l =
-		let l = List.map (fun (n,ml) -> n, List.filter (fun (m,_) -> m.[0] <> ':') ml) l in
+		let l = List.map (fun (n,ml) -> n, List.filter (fun (m,_,_) -> m.[0] <> ':') ml) l in
 		List.filter (fun (_,ml) -> ml <> []) l
 	in
 	let meta, fields, statics = filter meta, filter fields, filter statics in
@@ -305,17 +309,14 @@ let build_metadata com t =
 			mk (TObjectDecl (List.map (fun (n,e) -> n, loop e) el)) (TAnon { a_fields = PMap.empty; a_status = ref Closed }) p
 		| EArrayDecl el ->
 			mk (TArrayDecl (List.map loop el)) (com.basic.tarray t_dynamic) p
-		| EUnop (Neg, Prefix, e) ->
-			let e = loop e in
-			(match e.eexpr with
-			| TConst (TInt i) -> { e with eexpr = TConst (TInt (Int32.neg i)) }
-			| TConst (TFloat f) -> { e with eexpr = TConst (TFloat ("-" ^ f)) }
-			| _ -> error "Metadata should be constant" p)
 		| _ ->
 			error "Metadata should be constant" p
 	in
 	let make_meta_field ml =
-		mk (TObjectDecl (List.map (fun (f,el) ->
+		let h = Hashtbl.create 0 in
+		mk (TObjectDecl (List.map (fun (f,el,p) ->
+			if Hashtbl.mem h f then error ("Duplicate metadata '" ^ f ^ "'") p;
+			Hashtbl.add h f ();
 			f, mk (match el with [] -> TConst TNull | _ -> TArrayDecl (List.map loop el)) (api.tarray t_dynamic) p
 		) ml)) (api.tarray t_dynamic) p
 	in
@@ -389,8 +390,8 @@ let on_generate ctx t =
 	| TClassDecl c ->
 		List.iter (fun m ->
 			match m with
-			| ":native",[Ast.EConst (Ast.String name),p] ->
-				c.cl_meta <- (":real",[Ast.EConst (Ast.String (s_type_path c.cl_path)),p]) :: c.cl_meta;
+			| ":native",[Ast.EConst (Ast.String name),p],mp ->
+				c.cl_meta <- (":real",[Ast.EConst (Ast.String (s_type_path c.cl_path)),p],mp) :: c.cl_meta;
 				c.cl_path <- parse_path name;
 			| _ -> ()
 		) c.cl_meta;
@@ -595,12 +596,12 @@ let block_vars com e =
 			| _ ->
 				let args = List.map (fun (v,t) -> v, None, t) vars in
 				mk (TCall (
-					(mk (TFunction {
+					mk_parent (mk (TFunction {
 						tf_args = args;
 						tf_type = e.etype;
-						tf_expr = mk (TReturn (Some e)) e.etype e.epos;
+						tf_expr = mk_block (mk (TReturn (Some e)) e.etype e.epos);
 					}) (TFun (fun_args args,e.etype)) e.epos),
-					List.map (fun (v,t) -> mk (TLocal v) t e.epos) vars)
+					List.map (fun (v,t) -> mk (TLocal v) t e.epos) vars)					
 				) e.etype e.epos)
 		| _ ->
 			map_expr (wrap used) e
@@ -799,9 +800,8 @@ let check_local_vars_init e =
 (* -------------------------------------------------------------------------- *)
 (* POST PROCESS *)
 
-let post_process ctx filters tfilters =
+let post_process ctx filters =
 	List.iter (fun t ->
-		List.iter (fun f -> f t) tfilters;
 		match t with
 		| TClassDecl c ->
 			let process_field f =
@@ -873,7 +873,7 @@ let stack_context_init com stack_var exc_var pos_var tmp_var use_add p =
 		stack_restore = [
 			binop OpAssign exc_e (mk (TArrayDecl []) st p) st p;
 			mk (TWhile (
-				binop OpGte	(field stack_e "length" t.tint p) (mk (TLocal pos_var) t.tint p) t.tbool p,
+				mk_parent (binop OpGte (field stack_e "length" t.tint p) (mk (TLocal pos_var) t.tint p) t.tbool p),
 				fcall exc_e "unshift" [fcall stack_e "pop" [] t.tstring p] t.tvoid p,
 				NormalWhile
 			)) t.tvoid p;
@@ -928,7 +928,7 @@ let stack_block ctx c m e =
 	on some platforms which doesn't support type parameters, we must have the
 	exact same type for overriden/implemented function as the original one
 *)
-let fix_override c f fd =
+let fix_override com c f fd =
 	c.cl_fields <- PMap.remove f.cf_name c.cl_fields;
 	let rec find_field c interf =
 		try
@@ -955,21 +955,45 @@ let fix_override c f fd =
 	let f = (match f2 with
 		| Some (interf,f2) ->
 			let targs, tret = (match follow f2.cf_type with TFun (args,ret) -> args, ret | _ -> assert false) in
-			let fd2 = { fd with tf_args = List.map2 (fun (n,c,t) (_,_,t2) -> (n,c,t2)) fd.tf_args targs; tf_type = tret } in
+			let changed_args = ref [] in
+			let prefix = "_tmp_" in
+			let nargs = List.map2 (fun ((n,c,t) as cur) (_,_,t2) ->
+				try
+					type_eq EqStrict t t2;
+					cur
+				with Unify_error _ ->
+					changed_args := (n,t,t2) :: !changed_args;
+					(prefix ^ n,c,t2)
+			) fd.tf_args targs in
+			let fd2 = {
+				tf_args = nargs;
+				tf_type = tret;
+				tf_expr = (match List.rev !changed_args with
+					| [] -> fd.tf_expr
+					| args ->
+						let e = fd.tf_expr in
+						let el = (match e.eexpr with TBlock el -> el | _ -> [e]) in
+						let p = (match el with [] -> e.epos | e :: _ -> e.epos) in
+						let v = mk (TVars (List.map (fun (n,t,t2) ->
+							(n,t,Some (mk (TCast (mk (TLocal (prefix ^ n)) t2 p,None)) t p))
+						) args)) com.basic.tvoid p in
+						{ e with eexpr = TBlock (v :: el) }
+				);
+			} in
 			let fde = (match f.cf_expr with None -> assert false | Some e -> e) in
-			{ f with cf_expr = Some { fde with eexpr = TFunction fd2 } }
+			{ f with cf_expr = Some { fde with eexpr = TFunction fd2 }; cf_type = TFun(targs,tret) }
 		| _ -> f
 	) in
 	c.cl_fields <- PMap.add f.cf_name f c.cl_fields;
 	f
 
 let fix_overrides com t =
-	match com.platform, t with
-	| Flash9, TClassDecl c ->
+	match t with
+	| TClassDecl c ->
 		c.cl_ordered_fields <- List.map (fun f ->
 			match f.cf_expr, f.cf_kind with
 			| Some { eexpr = TFunction fd }, Method (MethNormal | MethInline) ->
-				fix_override c f fd
+				fix_override com c f fd
 			| _ ->
 				f
 		) c.cl_ordered_fields
@@ -1049,12 +1073,8 @@ let rec is_volatile t =
 
 let set_default ctx a c t p =
 	let ve = mk (TLocal a) t p in
-	let cond =  match ctx.platform with
-		| Js -> TCall (mk (TLocal "__js__") t_dynamic p,[mk (TConst (TString (a ^ "=== undefined"))) ctx.basic.tstring p])
-		| Flash -> TCall (mk (TLocal "__physeq__") t_dynamic p,[ve;mk (TCall (mk (TLocal "__undefined__") t_dynamic p,[])) t_dynamic p])
-		| _ -> TBinop (OpEq,ve,mk (TConst TNull) t p)
-	in
-	mk (TIf (mk cond ctx.basic.tbool p, mk (TBinop (OpAssign,ve,mk (TConst c) t p)) t p,None)) ctx.basic.tvoid p
+	let cond =  TBinop (OpEq,ve,mk (TConst TNull) t p) in
+	mk (TIf (mk_parent (mk cond ctx.basic.tbool p), mk (TBinop (OpAssign,ve,mk (TConst c) t p)) t p,None)) ctx.basic.tvoid p
 
 let bytes_serialize data =
 	let b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%:" in
@@ -1156,5 +1176,5 @@ let default_cast ?(vtmp="$t") com e texpr t p =
 	let is = mk (TField (std,"is")) (tfun [t_dynamic;t_dynamic] api.tbool) p in
 	let is = mk (TCall (is,[vexpr;texpr])) api.tbool p in
 	let exc = mk (TThrow (mk (TConst (TString "Class cast error")) api.tstring p)) t p in
-	let check = mk (TIf (is,mk (TCast (vexpr,None)) t p,Some exc)) t p in
+	let check = mk (TIf (mk_parent is,mk (TCast (vexpr,None)) t p,Some exc)) t p in
 	mk (TBlock [var;check;vexpr]) t p

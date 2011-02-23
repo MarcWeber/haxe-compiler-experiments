@@ -54,6 +54,8 @@ and vabstract =
 	| AZipD of zlib
 	| AUtf8 of UTF8.Buf.buf
 	| ASocket of Unix.file_descr
+	| ATExpr of texpr
+	| ATDecl of module_type
 
 and vfunction =
 	| Fun0 of (unit -> value)
@@ -85,12 +87,17 @@ type locals = (string, value ref) PMap.t
 
 type extern_api = {
 	pos : Ast.pos;
+	defined : string -> bool;
 	get_type : string -> Type.t option;
+	get_module : string -> Type.t list;
+	on_generate : (Type.t list -> unit) -> unit;
 	print : string -> unit;
 	parse_string : string -> Ast.pos -> Ast.expr;
 	typeof : Ast.expr -> Type.t;
 	type_patch : string -> string -> bool -> string option -> unit;
 	meta_patch : string -> string -> string option -> bool -> unit;
+	set_js_generator : (value -> unit) -> unit;
+	get_cur_class : unit -> tclass option;
 }
 
 type context = {
@@ -100,7 +107,7 @@ type context = {
 	globals : (string, value) Hashtbl.t;
 	prototypes : (string list, vobject) Hashtbl.t;
 	mutable error : bool;
-	mutable enums : string array array;
+	mutable enums : (value * string) array array;
 	mutable do_call : value -> value -> value list -> pos -> value;
 	mutable do_string : value -> string;
 	mutable do_loadprim : value -> value -> value;
@@ -112,6 +119,8 @@ type context = {
 	(* context *)
 	mutable curapi : extern_api;
 	mutable delayed : (unit -> value) DynArray.t;
+	(* optimized *)
+	switch_tables : (int, (expr_decl * expr option array option) list ref) Hashtbl.t;
 }
 
 type access =
@@ -136,7 +145,9 @@ let get_ctx_ref = ref (fun() -> assert false)
 let encode_type_ref = ref (fun t -> assert false)
 let encode_expr_ref = ref (fun e -> assert false)
 let decode_expr_ref = ref (fun e -> assert false)
+let enc_array_ref = ref (fun l -> assert false)
 let get_ctx() = (!get_ctx_ref)()
+let enc_array (l:value list) : value = (!enc_array_ref) l
 let encode_type (t:Type.t) : value = (!encode_type_ref) t
 let encode_expr (e:Ast.expr) : value = (!encode_expr_ref) e
 let decode_expr (e:value) : Ast.expr = (!decode_expr_ref) e
@@ -152,6 +163,18 @@ let make_pos p =
 
 let warn ctx msg p =
 	ctx.com.Common.warning msg (make_pos p)
+
+let catch_errors ctx ?(final=(fun() -> ())) f =
+	try
+		let v = f() in
+		final();
+		Some v
+	with Runtime v ->
+		final();
+		raise (Error (ctx.do_string v,List.map (fun (p,_,_) -> make_pos p) ctx.stack))
+	| Abort ->
+		final();
+		None
 
 let obj fields =
 	let h = Hashtbl.create 0 in
@@ -392,7 +415,7 @@ let builtins =
 			match vl with
 			| VFunction f :: _ :: _ ->
 				VClosure (vl, do_closure)
-			| _ -> exc (VString "Invalid closure arguments number")
+			| _ -> exc (VString "Can't create closure : value is not a function")
 		);
 		"apply", FunVar (fun vl ->
 			match vl with
@@ -492,7 +515,11 @@ let builtins =
 			ctx.curapi.print (ctx.do_string v)
 		) vl; VNull);
 		"throw", Fun1 (fun v -> exc v);
-		"rethrow", Fun1 (fun v -> exc v);
+		"rethrow", Fun1 (fun v -> 
+			let ctx = get_ctx() in
+			ctx.stack <- List.rev (List.map (fun p -> p,VNull,PMap.empty) ctx.exc) @ ctx.stack;
+			exc v
+		);
 		"istrue", Fun1 (fun v ->
 			match v with
 			| VNull | VInt 0 | VBool false -> VBool false
@@ -1359,7 +1386,7 @@ let reg_lib =
 					| c -> failwith ("Unsupported regexp option '" ^ String.make 1 c ^ "'")
 				) (ExtString.String.explode opt);
 				let buf = Buffer.create 0 in
-				let rec loop esc = function
+				let rec loop prev esc = function
 					| [] -> ()
 					| c :: l when esc ->
 						(match c with
@@ -1372,19 +1399,23 @@ let reg_lib =
 							Buffer.add_char buf '\\';
 							Buffer.add_char buf c;
 						| _ -> failwith ("Unsupported escaped char '" ^ String.make 1 c ^ "'"));
-						loop false l
+						loop c false l
 					| c :: l ->
 						match c with
-						| '\\' -> loop true l
+						| '\\' -> loop prev true l
 						| '(' | '|' | ')' ->
 							Buffer.add_char buf '\\';
 							Buffer.add_char buf c;
-							loop false l
+							loop c false l
+						| '?' when prev = '(' && (match l with ':' :: _ -> true | _ -> false) ->
+							failwith "Non capturing groups '(?:' are not supported in macros"
+						| '?' when prev = '*' ->
+							failwith "Ungreedy *? are not supported in macros"
 						| _ ->
 							Buffer.add_char buf c;
-							loop false l
+							loop c false l
 				in
-				loop false (ExtString.String.explode str);
+				loop '\000' false (ExtString.String.explode str);
 				let str = Buffer.contents buf in
 				let r = {
 					r = Str.regexp str;
@@ -1531,7 +1562,7 @@ let macro_lib =
 		);
 		"defined", Fun1 (fun s ->
 			match s with
-			| VString s -> VBool (Common.defined (get_ctx()).com s)
+			| VString s -> VBool ((get_ctx()).curapi.defined s)
 			| _ -> error();
 		);
 		"get_type", Fun1 (fun s ->
@@ -1540,6 +1571,22 @@ let macro_lib =
 				(match (get_ctx()).curapi.get_type s with
 				| None -> failwith ("Type not found '" ^ s ^ "'")
 				| Some t -> encode_type t)
+			| _ -> error()
+		);
+		"get_module", Fun1 (fun s ->
+			match s with
+			| VString s ->
+				enc_array (List.map encode_type ((get_ctx()).curapi.get_module s))
+			| _ -> error()
+		);
+		"on_generate", Fun1 (fun f ->
+			match f with
+			| VFunction (Fun1 _) ->
+				let ctx = get_ctx() in
+				ctx.curapi.on_generate (fun tl ->
+					ignore(catch_errors ctx (fun() -> ctx.do_call VNull f [enc_array (List.map encode_type tl)] null_pos));
+				);
+				VNull
 			| _ -> error()
 		);
 		"parse", Fun2 (fun s p ->
@@ -1551,7 +1598,8 @@ let macro_lib =
 			let cache = ref [] in
 			let rec loop v =
 				match v with
-				| VNull | VBool _ | VInt _ | VFloat _ | VString _ | VAbstract _ -> v
+				| VNull | VBool _ | VInt _ | VFloat _ | VString _ -> v
+				| VAbstract (AInt32 _ | APos _) -> v
 				| _ ->
 					try
 						List.assq v !cache
@@ -1561,7 +1609,9 @@ let macro_lib =
 					let o2 = { ofields = Hashtbl.create 0; oproto = None } in
 					let v2 = VObject o2 in
 					cache := (v,v2) :: !cache;
-					Hashtbl.iter (fun k v -> Hashtbl.add o2.ofields k (loop v)) o.ofields;
+					Hashtbl.iter (fun k v ->
+						if k <> "__class__" then Hashtbl.add o2.ofields k (loop v)
+					) o.ofields;
 					(match o.oproto with
 					| None -> ()
 					| Some p -> (match loop (VObject p) with VObject p2 -> o2.oproto <- Some p2 | _ -> assert false));
@@ -1579,8 +1629,18 @@ let macro_lib =
 					cache := (v,v2) :: !cache;
 					v2
 				| VClosure (vl,f) ->
-					let v2 = VClosure (List.map loop vl, Obj.magic (List.length !cache)) in
+					let v2 = VClosure ([], Obj.magic (List.length !cache)) in
 					cache := (v,v2) :: !cache;
+					v2
+				| VAbstract (AHash h) ->
+					let h2 = Hashtbl.create 0 in
+					let v2 = VAbstract (AHash h2) in
+					cache := (v, v2) :: !cache;
+					Hashtbl.iter (fun k v -> Hashtbl.add h2 k (loop v)) h2;
+					v2
+				| VAbstract _ ->
+					let v2 = VAbstract (Obj.magic (List.length !cache)) in
+					cache := (v, v2) :: !cache;
 					v2
 				| _ -> assert false
 			in
@@ -1606,6 +1666,36 @@ let macro_lib =
 			| _ -> error());
 			VNull
 		);
+		"custom_js", Fun1 (fun f ->
+			match f with
+			| VFunction (Fun1 _) ->
+				let ctx = get_ctx() in
+				ctx.curapi.set_js_generator (fun api ->
+					ignore(catch_errors ctx (fun() -> ctx.do_call VNull f [api] null_pos));
+				);
+				VNull
+			| _ -> error()
+		);
+		"get_pos_infos", Fun1 (fun p ->
+			match p with
+			| VAbstract (APos p) -> VObject (obj ["min",VInt p.Ast.pmin;"max",VInt p.Ast.pmax;"file",VString p.Ast.pfile])
+			| _ -> error()
+		);
+		"make_pos", Fun3 (fun min max file ->
+			match min, max, file with
+			| VInt min, VInt max, VString file -> VAbstract (APos { Ast.pmin = min; Ast.pmax = max; Ast.pfile = file })
+			| _ -> error()
+		);
+		"add_resource", Fun2 (fun name data ->
+			match name, data with
+			| VString name, VString data -> Hashtbl.replace (get_ctx()).com.Common.resources name data; VNull
+			| _ -> error()
+		);
+		"curclass", Fun0 (fun() ->
+			match (get_ctx()).curapi.get_cur_class() with
+			| None -> VNull
+			| Some c -> encode_type (TInst (c,[]))
+		);
 	]
 
 (* ---------------------------------------------------------------------- *)
@@ -1625,6 +1715,32 @@ let get_ident ctx s =
 		Hashtbl.find ctx.globals s
 	with Not_found ->
 		VNull
+
+let get_switch_table ctx e p =
+	try
+		List.assq e !(Hashtbl.find ctx.switch_tables p.pline)
+	with Not_found ->
+		let l = (try
+			Hashtbl.find ctx.switch_tables p.pline
+		with Not_found -> 
+			let l = ref [] in
+			Hashtbl.add ctx.switch_tables p.pline l;
+			l
+		) in
+		let cases = try Some (match e with
+		| ESwitch(_,cases,eo) ->			
+			let max = ref (-1) in
+			let ints = List.map (fun (cond,e) ->
+				match fst cond with
+				| EConst (Int i) -> if i < 0 then raise Exit; if i > !max then max := i; i, e
+				| _ -> raise Exit
+			) cases in
+			let a = Array.create (!max + 1) eo in
+			List.iter (fun (i,e) -> a.(i) <- Some e) (List.rev ints);
+			a;
+		| _ -> raise Exit) with Exit -> None in
+		l := (e,cases) :: !l;
+		cases
 
 let rec eval ctx (e,p) =
 	match e with
@@ -1818,17 +1934,22 @@ let rec eval ctx (e,p) =
 		VObject o
 	| ELabel l ->
 		assert false
-	| ESwitch (e,el,eo) ->
-		let v = eval ctx e in
-		let rec loop = function
-			| [] ->
-				(match eo with
-				| None -> VNull
-				| Some e -> eval ctx e)
-			| (c,e) :: l ->
-				if ctx.do_compare v (eval ctx c) = CEq then eval ctx e else loop l
-		in
-		loop el
+	| ESwitch (e1,el,eo) ->
+		(match eval ctx e1, get_switch_table ctx e p with
+		| VInt i, Some t ->
+			(match (if i >= 0 && i < Array.length t then t.(i) else eo) with
+			| None -> VNull
+			| Some e -> eval ctx e)
+		| v, _ ->
+			let rec loop = function
+				| [] ->
+					(match eo with
+					| None -> VNull
+					| Some e -> eval ctx e)
+				| (c,e) :: l ->
+					if ctx.do_compare v (eval ctx c) = CEq then eval ctx e else loop l
+			in
+			loop el)
 	| ENeko _ ->
 		throw ctx p "Inline neko code unsupported"
 
@@ -2048,6 +2169,7 @@ and call ctx vthis vfun pl p =
 			exc (VString ("Invalid call " ^ ctx.do_string vfun)))
 	with Return v -> v
 		| Sys_error msg | Failure msg -> exc (VString msg)
+		| Unix.Unix_error (_,cmd,msg) -> exc (VString ("Error " ^ cmd ^ " " ^ msg))
 		| Builtin_error | Invalid_argument _ -> exc (VString "Invalid call")) in
 	ctx.locals <- locals;
 	ctx.vthis <- oldthis;
@@ -2177,6 +2299,8 @@ let create com api =
 		(* context *)
 		curapi = api;
 		delayed = DynArray.create();
+		(* opt *)
+		switch_tables = Hashtbl.create 0;
 	} in
 	ctx.do_call <- call ctx;
 	ctx.do_string <- to_string ctx 0;
@@ -2185,19 +2309,6 @@ let create com api =
 	select ctx;
 	List.iter (fun e -> ignore(eval ctx e)) (Genneko.header());
 	ctx
-
-let catch_errors ctx ?(final=(fun() -> ())) f =
-	try
-		let v = f() in
-		final();
-		Some v
-	with Runtime v ->
-		final();
-		raise (Error (to_string ctx 0 v,List.map (fun (p,_,_) -> make_pos p) ctx.stack))
-	| Abort ->
-		final();
-		None
-
 
 let add_types ctx types =
 	let types = List.filter (fun t ->
@@ -2209,6 +2320,10 @@ let add_types ctx types =
 	) types in
 	let e = (EBlock (Genneko.build ctx.gen types), null_pos) in
 	ignore(catch_errors ctx (fun() -> ignore(eval ctx e)))
+
+let eval_expr ctx e =
+	let e = Genneko.gen_expr ctx.gen e in
+	catch_errors ctx (fun() -> eval ctx e)
 
 let get_path ctx path p =
 	let rec loop = function
@@ -2255,6 +2370,9 @@ type enum_index =
 	| ICType
 	| IField
 	| IType
+	| IFieldKind
+	| IMethodKind
+	| IVarAccess
 
 let enum_name = function
 	| IExpr -> "ExprDef"
@@ -2265,22 +2383,27 @@ let enum_name = function
 	| ICType -> "ComplexType"
 	| IField -> "FieldType"
 	| IType -> "Type"
+	| IFieldKind -> "FieldKind"
+	| IMethodKind -> "MethodKind"
+	| IVarAccess -> "VarAccess"
 
 let init ctx =
-	let enums = [IExpr;IBinop;IUnop;IConst;ITParam;ICType;IField;IType] in
+	let enums = [IExpr;IBinop;IUnop;IConst;ITParam;ICType;IField;IType;IFieldKind;IMethodKind;IVarAccess] in
 	let get_enum_proto e =
-		match get_path ctx ["haxe";"macro";enum_name e;"__constructs__"] null_pos with
-		| VObject cst ->
-			(match get_field cst "__a" with
+		match get_path ctx ["haxe";"macro";enum_name e] null_pos with
+		| VObject e ->
+			(match get_field e "__constructs__" with
+			| VObject cst ->
+				(match get_field cst "__a" with
 				| VArray a ->
 					Array.map (fun s ->
 						match s with
-						| VObject s -> (match get_field s "__s" with VString s -> s | _ -> assert false)
+						| VObject s -> (match get_field s "__s" with VString s -> get_field e s,s | _ -> assert false)
 						| _ -> assert false
 					) a
-				| _ -> assert false
-			)
-		| _ -> assert false
+				| _ -> assert false)
+			| _ -> assert false)
+		| _ -> failwith ("haxe.macro." ^ enum_name e ^ " does not exists")
 	in
 	ctx.enums <- Array.of_list (List.map get_enum_proto enums)
 
@@ -2331,12 +2454,15 @@ let enc_obj l = VObject (obj l)
 
 let enc_enum (i:enum_index) index pl =
 	let eindex : int = Obj.magic i in
-	let etags = (get_ctx()).enums.(eindex) in
-	enc_inst ["haxe";"macro";enum_name i] [
-		"tag", VString etags.(index);
-		"index", VInt index;
-		"args", VArray (Array.of_list pl);
-	]
+	let edef = (get_ctx()).enums.(eindex) in
+	if pl = [] then
+		fst edef.(index)
+	else
+		enc_inst ["haxe";"macro";enum_name i] [
+			"tag", VString (snd edef.(index));
+			"index", VInt index;
+			"args", VArray (Array.of_list pl);
+		]
 
 let encode_const c =
 	let tag, pl = match c with
@@ -2468,8 +2594,9 @@ let encode_expr e =
 						"expr",null loop eo;
 					]
 				) vl)]
-			| EFunction f ->
+			| EFunction (name,f) ->
 				12, [enc_obj [
+					"name", null enc_string name;
 					"args", enc_array (List.map (fun (n,opt,t,e) ->
 						enc_obj [
 							"name", enc_string n;
@@ -2698,14 +2825,14 @@ let decode_expr v =
 				(dec_string (field v "name"),opt decode_type (field v "type"),opt loop (field v "expr"))
 			) (dec_array vl))
 		| 12, [f] ->
-			let f = {
+			let ft = {
 				f_args = List.map (fun o ->
 					(dec_string (field o "name"),dec_bool (field o "opt"),opt decode_type (field o "type"),opt loop (field o "value"))
 				) (dec_array (field f "args"));
 				f_type = opt decode_type (field f "ret");
 				f_expr = loop (field f "expr");
 			} in
-			EFunction f
+			EFunction (opt dec_string (field f "name"),ft)
 		| 13, [el] ->
 			EBlock (List.map loop (dec_array el))
 		| 14, [v;e1;e2] ->
@@ -2774,17 +2901,18 @@ let encode_meta m set =
 	let meta = ref m in
 	enc_obj [
 		"get", VFunction (Fun0 (fun() ->
-			enc_array (List.map (fun (m,ml) ->
+			enc_array (List.map (fun (m,ml,p) ->
 				enc_obj [
 					"name", enc_string m;
 					"params", enc_array (List.map encode_expr ml);
+					"pos", encode_pos p;
 				]
 			) (!meta))
 		));
-		"add", VFunction (Fun2 (fun k vl ->
+		"add", VFunction (Fun3 (fun k vl p ->
 			(try
 				let el = List.map decode_expr (dec_array vl) in
-				meta := (dec_string k, el) :: !meta;
+				meta := (dec_string k, el, decode_pos p) :: !meta;
 				set (!meta)
 			with Invalid_expr ->
 				failwith "Invalid expression");
@@ -2792,7 +2920,7 @@ let encode_meta m set =
 		));
 		"remove", VFunction (Fun1 (fun k ->
 			let k = (try dec_string k with Invalid_expr -> raise Builtin_error) in
-			meta := List.filter (fun (m,_) -> m <> k) (!meta);
+			meta := List.filter (fun (m,_,_) -> m <> k) (!meta);
 			set (!meta);
 			VNull
 		));
@@ -2800,11 +2928,13 @@ let encode_meta m set =
 
 let rec encode_tenum e =
 	enc_obj [
+		"__t", encode_tdecl (TEnumDecl e);
 		"pack", enc_array (List.map enc_string (fst e.e_path));
 		"name", enc_string (snd e.e_path);
 		"pos", encode_pos e.e_pos;
 		"isPrivate", VBool e.e_private;
 		"isExtern", VBool e.e_extern;
+		"exclude", VFunction (Fun0 (fun() -> e.e_extern <- true; VNull));
 		"params", enc_array (List.map (fun (n,t) -> enc_obj ["name",enc_string n;"t",encode_type t]) e.e_types);
 		"contructs", encode_pmap encode_efield e.e_constrs;
 		"names", enc_array (List.map enc_string e.e_names);
@@ -2827,15 +2957,47 @@ and encode_cfield f =
 		"isPublic", VBool f.cf_public;
 		"params", enc_array (List.map (fun (n,t) -> enc_obj ["name",enc_string n;"t",encode_type t]) f.cf_params);
 		"meta", encode_meta f.cf_meta (fun m -> f.cf_meta <- m);
+		"expr", (match f.cf_expr with None -> VNull | Some e -> encode_texpr e);
+		"kind", encode_field_kind f.cf_kind;
 	]
+
+and encode_field_kind k =
+	let tag, pl = (match k with
+		| Type.Var v -> 0, [encode_var_access v.v_read; encode_var_access v.v_write]
+		| Method m -> 1, [encode_method_kind m]
+	) in
+	enc_enum IFieldKind tag pl
+
+and encode_var_access a =
+	let tag, pl = (match a with
+		| AccNormal -> 0, []
+		| AccNo -> 1, []
+		| AccNever -> 2, []
+		| AccResolve -> 3, []
+		| AccCall s -> 4, [enc_string s]
+		| AccInline	-> 5, []
+		| AccRequire s -> 6, [enc_string s]
+	) in
+	enc_enum IVarAccess tag pl
+
+and encode_method_kind m =
+	let tag, pl = (match m with
+		| MethNormal -> 0, []
+		| MethInline -> 1, []
+		| MethDynamic -> 2, []
+		| MethMacro -> 3, []
+	) in
+	enc_enum IMethodKind tag pl
 
 and encode_tclass c =
 	enc_obj [
+		"__t", encode_tdecl (TClassDecl c);
 		"pack", enc_array (List.map enc_string (fst c.cl_path));
 		"name", enc_string (snd c.cl_path);
 		"pos", encode_pos c.cl_pos;
 		"isPrivate", VBool c.cl_private;
 		"isExtern", VBool c.cl_extern;
+		"exclude", VFunction (Fun0 (fun() -> c.cl_extern <- true; c.cl_init <- None; VNull));
 		"params", enc_array (List.map (fun (n,t) -> enc_obj ["name",enc_string n;"t",encode_type t]) c.cl_types);
 		"isInterface", VBool c.cl_interface;
 		"superClass", (match c.cl_super with
@@ -2847,19 +3009,25 @@ and encode_tclass c =
 		"statics", encode_ref c.cl_ordered_statics (encode_array encode_cfield) (fun() -> "class fields");
 		"constructor", (match c.cl_constructor with None -> VNull | Some c -> encode_ref c encode_cfield (fun() -> "constructor"));
 		"meta", encode_meta c.cl_meta (fun m -> c.cl_meta <- m);
+		"init", (match c.cl_init with None -> VNull | Some e -> encode_texpr e);
 	]
 
 and encode_ttype t =
 	enc_obj [
+		"__t", encode_tdecl (TTypeDecl t);
 		"pack", enc_array (List.map enc_string (fst t.t_path));
 		"name", enc_string (snd t.t_path);
 		"pos", encode_pos t.t_pos;
 		"isPrivate", VBool t.t_private;
 		"isExtern", VBool false;
+		"exclude", VFunction (Fun0 (fun() -> VNull));
 		"params", enc_array (List.map (fun (n,t) -> enc_obj ["name",enc_string n;"t",encode_type t]) t.t_types);
 		"type", encode_type t.t_type;
 		"meta", encode_meta t.t_meta (fun m -> t.t_meta <- m);
 	]
+
+and encode_tdecl t =
+	VAbstract (ATDecl t)
 
 and encode_tanon a =
 	enc_obj [
@@ -2906,6 +3074,17 @@ and encode_type t =
 	let tag, pl = loop t in
 	enc_enum IType tag pl
 
+and encode_texpr e =
+	VAbstract (ATExpr e)
+
+let decode_tdecl v =
+	match v with
+	| VObject o ->
+		(match get_field o "__t" with
+		| VAbstract (ATDecl t) -> t
+		| _ -> raise Invalid_expr)
+	| _ -> raise Invalid_expr
+
 (* ---------------------------------------------------------------------- *)
 (* VALUE-TO-CONSTANT *)
 
@@ -2929,6 +3108,7 @@ let rec make_const e =
 		raise Exit
 
 ;;
+enc_array_ref := enc_array;
 encode_type_ref := encode_type;
 encode_expr_ref := encode_expr;
 decode_expr_ref := decode_expr

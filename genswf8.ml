@@ -1021,7 +1021,7 @@ and gen_expr_2 ctx retval e =
 		let old_meth = ctx.curmethod in
 		let reg_super = Codegen.local_find true "super" f.tf_expr in
 		if snd ctx.curmethod then
-			ctx.curmethod <- (fst ctx.curmethod ^ "@" ^ string_of_int (Lexer.find_line_index ctx.com.lines e.epos), true)
+			ctx.curmethod <- (fst ctx.curmethod ^ "@" ^ string_of_int (Lexer.get_error_line e.epos), true)
 		else
 			ctx.curmethod <- (fst ctx.curmethod, true);
 		(* only keep None bindings, for protect *)
@@ -1552,6 +1552,9 @@ let generate com =
 	List.iter (gen_expr ctx false) (List.rev ctx.inits);
 	let global_try = gen_try ctx in
 	List.iter (gen_class_static_init ctx) (List.rev ctx.statics);
+	(match com.main with
+	| None -> ()
+	| Some e -> gen_expr ctx false e);
 	ctx.static_init <- false;
 	let end_try = global_try() in
 	(* flash.Boot.__trace(exc) *)

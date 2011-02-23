@@ -52,6 +52,7 @@ typedef BaseType = {
 	var isExtern : Bool;
 	var params : Array<{ name : String, t : Type }>;
 	var meta : Metadata;
+	function exclude() : Void;
 }
 
 typedef ClassField = {
@@ -60,7 +61,8 @@ typedef ClassField = {
 	var isPublic : Bool;
 	var params : Array<{ name : String, t : Type }>;
 	var meta : Metadata;
-	//var kind : FieldKind;
+	var kind : FieldKind;
+	var expr : Null<TypedExpr>;
 }
 
 typedef ClassType = {> BaseType,
@@ -73,6 +75,7 @@ typedef ClassType = {> BaseType,
 	//var dynamic : Null<Type>;
 	//var arrayAccess : Null<Type>;
 	var constructor : Null<Ref<ClassField>>;
+	var init : Null<TypedExpr>;
 }
 
 typedef EnumField = {
@@ -93,7 +96,31 @@ typedef DefType = {> BaseType,
 }
 
 typedef Metadata = {
-	function get() : Array<{ name : String, params : Array<Expr> }>;
-	function add( name : String, params : Array<Expr> ) : Void;
+	function get() : Array<{ name : String, params : Array<Expr>, pos : Expr.Position }>;
+	function add( name : String, params : Array<Expr>, pos : Expr.Position ) : Void;
 	function remove( name : String ) : Void;
 }
+
+enum FieldKind {
+	FVar( read : VarAccess, write : VarAccess );
+	FMethod( k : MethodKind );
+}
+
+enum VarAccess {
+	AccNormal;
+	AccNo;
+	AccNever;
+	AccResolve;
+	AccCall( m : String );
+	AccInline;
+	AccRequire( r : String );
+}
+
+enum MethodKind {
+	MethNormal;
+	MethInline;
+	MethDynamic;
+	MethMacro;
+}
+
+extern enum TypedExpr {}

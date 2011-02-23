@@ -24,7 +24,7 @@
  */
 package js;
 
-@:keep class Boot {
+class Boot {
 
 	private static function __unhtml(s : String) {
 		return s.split("&").join("&amp;").split("<").join("&lt;").split(">").join("&gt;");
@@ -234,11 +234,11 @@ package js;
 					}
 				}
 			};
-			var cca = String.prototype.charCodeAt;
-			String.prototype.cca = cca;
+			if( String.prototype.cca == null )
+				String.prototype.cca = String.prototype.charCodeAt;
 			String.prototype.charCodeAt = function(i) {
-				var x = cca.call(this,i);
-				if( isNaN(x) )
+				var x = this.cca(i);
+				if( x != x ) // fast isNaN
 					return null;
 				return x;
 			};

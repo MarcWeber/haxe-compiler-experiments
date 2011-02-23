@@ -38,7 +38,6 @@ type context = {
 	mutable locals : (string,string) PMap.t;
 	mutable inv_locals : (string,string) PMap.t;
 	mutable local_types : t list;
-	mutable inits : texpr list;
 	mutable constructor_block : bool;
 }
 
@@ -67,6 +66,10 @@ let s_path ctx stat path p =
 		"XML"
 	| (["flash";"xml"],"XMLList") ->
 		"XMLList"
+	| ["flash";"utils"],"QName" ->
+		"QName"
+	| ["flash";"utils"],"Namespace" ->
+		"Namespace"
 	| (["haxe"],"Int32") when not stat ->
 		"int"
 	| (pack,name) ->
@@ -118,7 +121,6 @@ let init infos path =
 		locals = PMap.empty;
 		inv_locals = PMap.empty;
 		local_types = [];
-		inits = [];
 		get_sets = Hashtbl.create 0;
 		constructor_block = false;
 	}
@@ -198,8 +200,17 @@ let rec type_str ctx t p =
 		if e.e_extern then (match e.e_path with
 			| [], "Void" -> "void"
 			| [], "Bool" -> "Boolean"
-			| "flash" :: _ , _ -> "String"
-			| _ -> "Object"
+			| _ -> 
+				let rec loop = function
+					| [] -> "Object"
+					| (":fakeEnum",[Ast.EConst (Ast.Type n),_],_) :: _ ->
+						(match n with
+						| "Int" -> "int"
+						| "UInt" -> "uint"
+						| _ -> n)
+					| _ :: l -> loop l
+				in
+				loop e.e_meta
 		) else
 			s_path ctx true e.e_path p
 	| TInst ({ cl_path = ["flash"],"Vector" },[pt]) ->
@@ -283,7 +294,15 @@ let gen_function_header ctx name f params p =
 	let old_t = ctx.local_types in
 	ctx.in_value <- None;
 	ctx.local_types <- List.map snd params @ ctx.local_types;
-	print ctx "function%s(" (match name with None -> "" | Some n -> " " ^ n);
+	print ctx "function%s(" (match name with None -> "" | Some (n,meta) ->
+		let rec loop = function
+			| [] -> n
+			| (":getter",[Ast.EConst (Ast.Ident i | Ast.Type i),_],_) :: _ -> "get " ^ i
+			| (":setter",[Ast.EConst (Ast.Ident i | Ast.Type i),_],_) :: _ -> "set " ^ i
+			| _ :: l -> loop l
+		in
+		" " ^ loop meta
+	);
 	concat ctx "," (fun (arg,c,t) ->
 		let arg = define_local ctx arg in
 		let tstr = type_str ctx t p in
@@ -383,13 +402,6 @@ let rec gen_call ctx e el r =
 		spr ctx ")"
 	| TField ({ eexpr = TTypeExpr (TClassDecl { cl_path = (["flash"],"Lib") }) },f), args ->
 		(match f, args with
-		| "vectorOfArray", [e] | "vectorConvert", [e] ->
-			(match follow r with
-			| TInst ({ cl_path = (["flash"],"Vector") },[t]) ->
-				print ctx "Vector.<%s>(" (type_str ctx t e.epos);
-				gen_value ctx e;
-				print ctx ")";
-			| _ -> assert false)
 		| "as", [e1;e2] ->
 			gen_value ctx e1;
 			spr ctx " as ";
@@ -399,6 +411,16 @@ let rec gen_call ctx e el r =
 			spr ctx "(";
 			concat ctx "," (gen_value ctx) el;
 			spr ctx ")")
+	| TField ({ eexpr = TTypeExpr (TClassDecl { cl_path = (["flash"],"Vector") }) },f), args ->
+		(match f, args with
+		| "ofArray", [e] | "convert", [e] ->
+			(match follow r with
+			| TInst ({ cl_path = (["flash"],"Vector") },[t]) ->
+				print ctx "Vector.<%s>(" (type_str ctx t e.epos);
+				gen_value ctx e;
+				print ctx ")";
+			| _ -> assert false)
+		| _ -> assert false)
 	| _ ->
 		gen_value ctx e;
 		spr ctx "(";
@@ -432,6 +454,8 @@ and gen_field_access ctx t s =
 			print ctx "[\"toStringHX\"]"
 		| [], "String", "cca" ->
 			print ctx ".charCodeAt"
+		| ["flash";"xml"], "XML", "namespace" ->
+			print ctx ".namespace"
 		| _ ->
 			print ctx ".%s" (s_ident s)
 	in
@@ -821,11 +845,6 @@ and gen_value ctx e =
 		)) e.etype e.epos);
 		v()
 
-let generate_boot_init ctx =
-	print ctx "private static function init() : void {";
-	List.iter (gen_expr ctx) ctx.inits;
-	print ctx "}"
-
 let generate_field ctx static f =
 	newline ctx;
 	ctx.in_static <- static;
@@ -847,15 +866,13 @@ let generate_field ctx static f =
 					loop c
 		in
 		if not static then loop ctx.curclass;
-		let h = gen_function_header ctx (Some (s_ident f.cf_name)) fd f.cf_params p in
+		let h = gen_function_header ctx (Some (s_ident f.cf_name, f.cf_meta)) fd f.cf_params p in
 		gen_expr ctx (mk_block fd.tf_expr);
 		h();
 		newline ctx
 	| _ ->
 		let is_getset = (match f.cf_kind with Var { v_read = AccCall _ } | Var { v_write = AccCall _ } -> true | _ -> false) in
-		if ctx.curclass.cl_path = (["flash"],"Boot") && f.cf_name = "init" then
-			generate_boot_init ctx
-		else if ctx.curclass.cl_interface then
+		if ctx.curclass.cl_interface then
 			match follow f.cf_type with
 			| TFun (args,r) ->
 				print ctx "function %s(" f.cf_name;
@@ -971,24 +988,24 @@ let generate_class ctx c =
 	print ctx "}";
 	newline ctx
 
-let generate_main ctx c =
-	ctx.curclass <- c;
+let generate_main ctx inits =
+	ctx.curclass <- { null_class with cl_path = [],"__main__" };
 	let pack = open_block ctx in
-	print ctx "\tpublic class __main__ extends %s {" (s_path ctx true (["flash";"display"],"MovieClip") c.cl_pos);
+	print ctx "\timport flash.Lib";
+	newline ctx;
+	print ctx "public class __main__ extends %s {" (s_path ctx true (["flash"],"Boot") Ast.null_pos);
 	let cl = open_block ctx in
 	newline ctx;
-	(match c.cl_ordered_statics with
-	| [{ cf_expr = Some e }] ->
-		spr ctx "public function __main__() {";
-		let f = open_block ctx in
-		newline ctx;
-		print ctx "new %s(this)" (s_path ctx true (["flash"],"Boot") c.cl_pos);
-		newline ctx;
-		gen_value ctx e;
-		f();
-		newline ctx;
-		spr ctx "}";
-	| _ -> assert false);
+	spr ctx "public function __main__() {";
+	let fl = open_block ctx in
+	newline ctx;
+	spr ctx "super()";
+	newline ctx;
+	spr ctx "flash.Lib.current = this";
+	List.iter (fun e -> newline ctx; gen_expr ctx e) inits;
+	fl();
+	newline ctx;
+	print ctx "}";
 	cl();
 	newline ctx;
 	print ctx "}";
@@ -1064,7 +1081,6 @@ let generate com =
 	let ctx = init infos ([],"enum") in
 	generate_base_enum ctx;
 	close ctx;
-	let boot = ref None in
 	let inits = ref [] in
 	List.iter (fun t ->
 		match t with
@@ -1078,17 +1094,10 @@ let generate com =
 			| Some e -> inits := e :: !inits);
 			if c.cl_extern then
 				()
-			else (match c.cl_path with
-			| [], "@Main" ->
-				let ctx = init infos ([],"__main__") in
-				generate_main ctx c;
-				close ctx;
-			| ["flash"], "Boot" ->
-				boot := Some c;
-			| _ ->
+			else
 				let ctx = init infos c.cl_path in
 				generate_class ctx c;
-				close ctx)
+				close ctx
 		| TEnumDecl e ->
 			let pack,name = e.e_path in
 			let e = { e with e_path = (pack,protect name) } in
@@ -1101,10 +1110,9 @@ let generate com =
 		| TTypeDecl t ->
 			()
 	) com.types;
-	match !boot with
-	| None -> assert false
-	| Some c ->
-		let ctx = init infos c.cl_path in
-		ctx.inits <- List.rev !inits;
-		generate_class ctx c;
-		close ctx
+	(match com.main with
+	| None -> ()
+	| Some e -> inits := e :: !inits);
+	let ctx = init infos ([],"__main__") in
+	generate_main ctx (List.rev !inits);
+	close ctx

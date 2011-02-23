@@ -25,6 +25,7 @@ type error_msg =
 	| Unclosed_macro
 	| Unimplemented
 	| Missing_type
+	| Custom of string
 
 exception Error of error_msg * pos
 exception TypePath of string list * string option
@@ -37,6 +38,7 @@ let error_msg = function
 	| Unclosed_macro -> "Unclosed macro"
 	| Unimplemented -> "Not implemented for current platform"
 	| Missing_type -> "Missing type declaration"
+	| Custom s -> s
 
 let error m p = raise (Error (m,p))
 let display_error : (error_msg -> pos -> unit) ref = ref (fun _ _ -> assert false)
@@ -58,37 +60,34 @@ let display e = raise (Display e)
 
 let is_resuming p =
 	let p2 = !resume_display in
-	p.pmax = p2.pmin && String.lowercase (Common.get_full_path p.pfile) = p2.pfile
+	p.pmax = p2.pmin && String.lowercase (Common.get_full_path p.pfile) = String.lowercase p2.pfile
 
-let priority = function
-	| OpAssign | OpAssignOp _ -> -4
-	| OpBoolOr -> -3
-	| OpBoolAnd -> -2
-	| OpInterval -> -2
-	| OpEq | OpNotEq | OpGt | OpLt | OpGte | OpLte -> -1
-	| OpOr | OpAnd | OpXor -> 0
-	| OpShl | OpShr | OpUShr -> 1
-	| OpAdd | OpSub -> 2
-	| OpMult | OpDiv -> 3
-	| OpMod -> 4
+let precedence op =
+	let left = true and right = false in
+	match op with
+	| OpMod -> 0, left
+	| OpMult | OpDiv -> 1, left
+	| OpAdd | OpSub -> 2, left
+	| OpShl | OpShr | OpUShr -> 3, left
+	| OpOr | OpAnd | OpXor -> 4, left
+	| OpEq | OpNotEq | OpGt | OpLt | OpGte | OpLte -> 5, left
+	| OpInterval -> 6, left
+	| OpBoolAnd -> 7, left
+	| OpBoolOr -> 8, left
+	| OpAssign | OpAssignOp _ -> 9, right
 
 let is_not_assign = function
 	| OpAssign | OpAssignOp _ -> false
 	| _ -> true
 
-let swap _op op =
-	let p1 = priority _op in
-	let p2 = priority op in
-	if p1 < p2 then
-		is_not_assign _op || is_not_assign op
-	else if p1 = p2 && p1 >= 0 then (* numerical ops are left-assoc *)
-		is_not_assign _op || is_not_assign op
-	else
-		false
+let swap op1 op2 =
+	let p1, left1 = precedence op1 in
+	let p2, _ = precedence op2 in
+	left1 && p1 <= p2
 
 let rec make_binop op e ((v,p2) as e2) =
 	match v with
-	| EBinop (_op,_e,_e2) when swap _op op ->
+	| EBinop (_op,_e,_e2) when swap op _op ->
 		let _e = make_binop op e _e in
 		EBinop (_op,_e,_e2) , punion (pos _e) (pos _e2)
 	| ETernary (e1,e2,e3) when is_not_assign op ->
@@ -100,6 +99,7 @@ let rec make_binop op e ((v,p2) as e2) =
 let rec make_unop op ((v,p2) as e) p1 =
 	match v with
 	| EBinop (bop,e,e2) -> EBinop (bop, make_unop op e p1 , e2) , (punion p1 p2)
+	| ETernary (e1,e2,e3) -> ETernary (make_unop op e1 p1 , e2, e3), punion p1 p2
 	| _ ->
 		EUnop (op,Prefix,e), punion p1 p2
 
@@ -207,40 +207,37 @@ and parse_package s = psep Dot ident s
 and parse_class_field_resume s =
 	if not (do_resume()) then
 		plist parse_class_field s
-	else
+	else try
+		let c = parse_class_field s in
+		c :: parse_class_field_resume s
+	with Stream.Error _ | Stream.Failure -> try
 		(* junk all tokens until we reach next variable/function or next type declaration *)
 		let rec loop() =
 			(match List.map fst (Stream.npeek 2 s) with
-			| At :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Override :: _ | Kwd Dynamic :: _ ->
+			| At :: _ | Kwd Public :: _ | Kwd Static :: _ | Kwd Var :: _ | Kwd Override :: _ | Kwd Dynamic :: _ | Kwd Inline :: _ ->
 				raise Exit
 			| [] | Eof :: _ | Kwd Import :: _ | Kwd Using :: _ | Kwd Extern :: _ | Kwd Class :: _ | Kwd Interface :: _ | Kwd Enum :: _ | Kwd Typedef :: _ ->
 				raise Not_found
-			| [Kwd Private; Kwd Function]
-			| [Kwd Private; Kwd Var] ->
-				raise Exit
 			| [Kwd Private; Kwd Class]
 			| [Kwd Private; Kwd Interface]
 			| [Kwd Private; Kwd Enum]
 			| [Kwd Private; Kwd Typedef] ->
 				raise Not_found
+			| Kwd Private :: _ ->
+				raise Exit
 			| [Kwd Function; Const _]
 			| [Kwd Function; Kwd New] ->
 				raise Exit
+			| [BrClose; At] ->
+				raise Not_found
 			| _ -> ());
 			Stream.junk s;
 			loop();
 		in
-		try
-			loop();
-		with
-			| Not_found ->
-				[]
-			| Exit ->
-				try
-					let c = parse_class_field s in
-					c :: parse_class_field_resume s
-				with
-					Stream.Error _ | Stream.Failure -> parse_class_field_resume s
+		loop()
+	with
+		| Not_found -> [] (* we have reached the next type declaration *)
+		| Exit -> parse_class_field_resume s
 
 and parse_common_flags = parser
 	| [< '(Kwd Private,_); l = parse_common_flags >] -> (HPrivate, EPrivate) :: l
@@ -248,17 +245,17 @@ and parse_common_flags = parser
 	| [< >] -> []
 
 and parse_meta = parser
-	| [< '(At,_); name = meta_name; s >] ->
+	| [< '(At,_); name,p = meta_name; s >] ->
 		(match s with parser
-		| [< '(POpen,_); params = psep Comma expr; '(PClose,_); s >] -> (name,params) :: parse_meta s
-		| [< >] -> (name,[]) :: parse_meta s)
+		| [< '(POpen,_); params = psep Comma expr; '(PClose,_); s >] -> (name,params,p) :: parse_meta s
+		| [< >] -> (name,[],p) :: parse_meta s)
 	| [< >] -> []
 
 and meta_name = parser
-	| [< '(Const (Ident i),_) >] -> i
-	| [< '(Const (Type t),_) >] -> t
-	| [< '(Kwd k,_) >] -> s_keyword k
-	| [< '(DblDot,_); s >] -> ":" ^ meta_name s
+	| [< '(Const (Ident i),p) >] -> i, p
+	| [< '(Const (Type t),p) >] -> t, p
+	| [< '(Kwd k,p) >] -> s_keyword k,p
+	| [< '(DblDot,_); s >] -> let n, p = meta_name s in ":" ^ n, p
 
 and parse_enum_flags = parser
 	| [< '(Kwd Enum,p) >] -> [] , p
@@ -536,21 +533,35 @@ and expr = parser
 		| [< >] -> serror())
 	| [< '(POpen,p1); e = expr; '(PClose,p2); s >] -> expr_next (EParenthesis e, punion p1 p2) s
 	| [< '(BkOpen,p1); l = parse_array_decl; '(BkClose,p2); s >] -> expr_next (EArrayDecl l, punion p1 p2) s
-	| [< '(Kwd Function,p1); '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
+	| [< '(Kwd Function,p1); name = popt any_ident; '(POpen,_); al = psep Comma parse_fun_param; '(PClose,_); t = parse_type_opt; s >] ->
 		let make e =
 			let f = {
 				f_type = t;
 				f_args = al;
 				f_expr = e;
 			} in
-			EFunction f, punion p1 (pos e)
+			EFunction (name,f), punion p1 (pos e)
 		in
 		(try
 			expr_next (make (expr s)) s
 		with
 			Display e -> display (make e))
 	| [< '(Unop op,p1) when is_prefix op; e = expr >] -> make_unop op e p1
-	| [< '(Binop OpSub,p1); e = expr >] -> make_unop Neg e p1
+	| [< '(Binop OpSub,p1); e = expr >] ->
+		let neg s =
+			if s.[0] = '-' then String.sub s 1 (String.length s - 1) else "-" ^ s
+		in
+		(match make_unop Neg e p1 with
+		| EUnop (Neg,Prefix,(EConst (Int i),pc)),p -> EConst (Int (neg i)),p
+		| EUnop (Neg,Prefix,(EConst (Float j),pc)),p -> EConst (Float (neg j)),p
+		| e -> e)
+	(*/* removed unary + : this cause too much syntax errors go unnoticed, such as "a + + 1" (missing 'b')
+						without adding anything to the language
+	| [< '(Binop OpAdd,p1); s >] ->
+		(match s with parser
+		| [< '(Const (Int i),p); e = expr_next (EConst (Int i),p) >] -> e
+		| [< '(Const (Float f),p); e = expr_next (EConst (Float f),p) >] -> e
+		| [< >] -> serror()) */*)
 	| [< '(Kwd For,p); '(POpen,_); name = any_ident; '(Kwd In,_); it = expr; '(PClose,_); s >] ->
 		(try
 			let e = expr s in
@@ -642,12 +653,12 @@ and expr_next e1 = parser
 
 and parse_switch_cases eswitch cases = parser
 	| [< '(Kwd Default,p1); '(DblDot,_); s >] ->
-		let b = EBlock (try block [] s with Display e -> display (ESwitch (eswitch,cases,Some e),p1)) in
+		let b = EBlock (try block [] s with Display e -> display (ESwitch (eswitch,cases,Some e),punion (pos eswitch) (pos e))) in
 		let l , def = parse_switch_cases eswitch cases s in
 		(match def with None -> () | Some (e,p) -> error Duplicate_default p);
 		l , Some (b,p1)
 	| [< '(Kwd Case,p1); el = psep Comma expr; '(DblDot,_); s >] ->
-		let b = EBlock (try block [] s with Display e -> display (ESwitch (eswitch,List.rev ((el,e) :: cases),None),p1)) in
+		let b = EBlock (try block [] s with Display e -> display (ESwitch (eswitch,List.rev ((el,e) :: cases),None),punion (pos eswitch) (pos e))) in
 		parse_switch_cases eswitch ((el,(b,p1)) :: cases) s
 	| [< >] ->
 		List.rev cases , None
@@ -661,7 +672,7 @@ and parse_catch etry = parser
 				| [< e = expr >] ->	(name,t,e)
 				| [< >] -> serror()
 			with
-				Display e -> display (ETry (etry,[name,t,e]),p))
+				Display e -> display (ETry (etry,[name,t,e]),punion (pos etry) (pos e)))
 		| [< '(_,p) >] -> error Missing_type p
 
 and parse_call_params ec s =
@@ -670,7 +681,7 @@ and parse_call_params ec s =
 		| [< e = expr >] -> Some e
 		| [< >] -> None
 	with Display e ->
-		display (ECall (ec,[e]),pos ec)
+		display (ECall (ec,[e]),punion (pos ec) (pos e))
 	) in
 	let rec loop acc =
 		try
@@ -678,7 +689,7 @@ and parse_call_params ec s =
 			| [< '(Comma,_); e = expr >] -> loop (e::acc)
 			| [< >] -> List.rev acc
 		with Display e ->
-			display (ECall (ec,List.rev (e::acc)),pos ec)
+			display (ECall (ec,List.rev (e::acc)),punion (pos ec) (pos e))
 	in
 	match e with
 	| None -> []
@@ -690,7 +701,7 @@ and parse_macro_cond allow_op s =
 		let e = (EConst (Ident t),p) in
 		if not allow_op then
 			None, e
-		else (match Stream.peek s with 
+		else (match Stream.peek s with
 			| Some (Binop op,_) ->
 				Stream.junk s;
 				let tk, e2 = (try parse_macro_cond true s with Stream.Failure -> serror()) in
@@ -743,13 +754,15 @@ let parse ctx code =
 		| Macro "if" ->
 			process_token (enter_macro (snd tk))
 		| Macro "error" ->
-			error Unimplemented (snd tk)
+			(match Lexer.token code with
+			| (Const (String s),p) -> error (Custom s) p
+			| _ -> error Unimplemented (snd tk))
 		| Macro "line" ->
 			let line = (match next_token() with
 				| (Const (Int s),_) -> int_of_string s
 				| (t,p) -> error (Unexpected t) p
 			) in
-			Lexer.cur_line := line - 1;
+			!(Lexer.cur).Lexer.lline <- line - 1;
 			next_token();
 		| _ ->
 			tk

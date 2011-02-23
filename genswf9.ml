@@ -79,6 +79,7 @@ type context = {
 	com : Common.context;
 	debugger : bool;
 	swc : bool;
+	boot : path;
 	mutable last_line : int;
 	mutable last_file : string;
 	(* per-function *)
@@ -158,10 +159,6 @@ let type_path ctx path =
 	let pack, name = real_path path in
 	HMPath (pack,name)
 
-let is_int_enum = function
-	| "ActionScriptVersion" | "SWFVersion" | "EventPhase" | "KeyLocation" | "XmlNodeType" -> true
-	| _ -> false
-
 let rec follow_basic t =
 	match t with
 	| TMono r ->
@@ -188,8 +185,6 @@ let rec follow_basic t =
 
 let rec type_id ctx t =
 	match follow_basic t with
-	| TEnum ({ e_path = path; e_extern = false },_) ->
-		type_path ctx path
 	| TInst ({ cl_path = ["haxe"],"Int32" },_) ->
 		type_path ctx ([],"Int")
 	| TInst ({ cl_path = ["flash"],"Vector" } as c,pl) ->
@@ -206,14 +201,17 @@ let rec type_id ctx t =
 			type_path ctx c.cl_path)
 	| TFun _ ->
 		type_path ctx ([],"Function")
-	| TEnum ({ e_path = ([],"Class") as path },_)
-	| TEnum ({ e_path = ([],"Bool") as path },_)
 	| TType ({ t_path = ([],"UInt") as path },_) ->
 		type_path ctx path
-	| TEnum ({ e_path = ("flash" :: _,name); e_extern = true },_) ->
-		HMPath ([],if is_int_enum name then "int" else "String")
 	| TEnum ({ e_path = [],"XmlType"; e_extern = true },_) ->
 		HMPath ([],"String")
+	| TEnum (e,_) ->
+		let rec loop = function
+			| [] -> type_path ctx e.e_path
+			| (":fakeEnum",[Ast.EConst (Ast.Type n),_],_) :: _ -> type_path ctx ([],n)
+			| _ :: l -> loop l
+		in
+		loop e.e_meta
 	| _ ->
 		HMPath ([],"Object")
 
@@ -235,9 +233,20 @@ let classify ctx t =
 		KFloat
 	| TEnum ({ e_path = [],"Bool" },_) ->
 		KBool
-	| TEnum ({ e_extern = true; e_path = "flash" :: _ , name },[]) ->
-		if is_int_enum name then KInt else KType (HMPath ([],"String"))
-	| TEnum _
+	| TEnum ({ e_path = [],"XmlType"; e_extern = true },_) ->
+		KType (HMPath ([],"String"))
+	| TEnum (e,_) ->
+		let rec loop = function
+			| [] -> KType (type_id ctx t)
+			| (":fakeEnum",[Ast.EConst (Type n),_],_) :: _ ->				
+				(match n with
+				| "Int" -> KInt
+				| "UInt" -> KUInt
+				| "String" -> KType (HMPath ([],"String"))
+				| _ -> assert false)
+			| _ :: l -> loop l
+		in
+		loop e.e_meta
 	| TInst _ ->
 		KType (type_id ctx t)
 	| TType ({ t_path = [],"UInt" },_) ->
@@ -280,7 +289,7 @@ let property ctx p t =
 		(match p with
 		| "length" (* Int in AS3/haXe *) -> ident p, None, false
 		| "charCodeAt" (* use haXe version *) -> ident p, None, true
-		| "cca" -> as3 "charCodeAt", Some KInt, false
+		| "cca" -> as3 "charCodeAt", None, false
 		| _ -> as3 p, None, false);
 	| TAnon a ->
 		(match !(a.a_status) with
@@ -523,7 +532,7 @@ let begin_switch ctx =
 
 let debug_infos ?(is_min=true) ctx p =
 	if ctx.com.debug then begin
-		let line = Lexer.find_line_index ctx.com.lines (if is_min then p else { p with pmin = p.pmax }) in
+		let line = Lexer.get_error_line (if is_min then p else { p with pmin = p.pmax }) in
 		if ctx.last_file <> p.pfile then begin
 			write ctx (HDebugFile (if ctx.debugger then try Common.get_full_path p.pfile with _ -> p.pfile else p.pfile));
 			ctx.last_file <- p.pfile;
@@ -535,27 +544,34 @@ let debug_infos ?(is_min=true) ctx p =
 		end
 	end
 
-let end_fun ctx args tret =
-	let dparams = ref None in
-	let constant_value t = function
-		| None -> HVNone
-		| Some c ->
-			match c with
-			| TInt i ->
-				(match classify ctx t with
-				| KUInt -> HVUInt i
-				| _ -> HVInt i)
-			| TFloat s -> HVFloat (float_of_string s)
-			| TString s -> HVString (Genswf8.to_utf8 s)
-			| TBool b -> HVBool b
-			| TNull -> HVNone
-			| TThis	| TSuper -> assert false
-	in
-	List.iter (fun (_,c,t) ->
-		match !dparams with
-		| None -> if c <> None then dparams := Some [constant_value t c]
-		| Some l -> dparams := Some (constant_value t c :: l)
-	) args;
+let gen_constant ctx c t p =
+	match c with
+	| TInt i ->
+		let unsigned = classify ctx t = KUInt in
+		if Int32.compare i (-128l) > 0 && Int32.compare i 128l < 0 then begin
+			write ctx (HSmallInt (Int32.to_int i));
+			if unsigned then write ctx HToUInt;
+		end else
+			write ctx (if unsigned then HUIntRef i else HIntRef i)
+	| TFloat f ->
+		let f = float_of_string f in
+		write ctx (HFloat f);
+	| TString s ->
+		write ctx (HString (Genswf8.to_utf8 s));
+	| TBool b ->
+		write ctx (if b then HTrue else HFalse);
+	| TNull ->
+		write ctx HNull;
+		(match classify ctx t with
+		| KInt | KBool | KUInt | KFloat ->
+			error ("In Flash9, null can't be used as basic type " ^ s_type (print_context()) t) p
+		| x -> coerce ctx x)
+	| TThis ->
+		write ctx HThis
+	| TSuper ->
+		assert false
+
+let end_fun ctx args dparams tret =
 	{
 		hlmt_index = 0;
 		hlmt_ret = type_void ctx tret;
@@ -563,7 +579,7 @@ let end_fun ctx args tret =
 		hlmt_native = false;
 		hlmt_var_args = false;
 		hlmt_debug_name = None;
-		hlmt_dparams = (match !dparams with None -> None | Some l -> Some (List.rev l));
+		hlmt_dparams = dparams;
 		hlmt_pnames = if ctx.swc || ctx.debugger then Some (List.map (fun (n,_,_) -> Some n) args) else None;
 		hlmt_new_block = false;
 		hlmt_unused_flag = false;
@@ -604,15 +620,47 @@ let begin_fun ctx args tret el stat p =
 		| LScope _ -> PMap.add name (LGlobal (ident name)) acc
 		| LGlobal _ -> PMap.add name l acc
 	) ctx.locals PMap.empty;
-	List.iter (fun (name,_,t) ->
-		define_local ctx name ~init:true t el p;
+
+	let dparams = ref None in
+	let make_constant_value r c t =
+		let v = (match classify ctx t, c with
+		| _, None -> HVNone
+		| (KInt | KFloat | KUInt | KBool) as kind, Some c ->
+			(match c with
+			| TInt i -> if kind = KUInt then HVUInt i else HVInt i
+			| TFloat s -> HVFloat (float_of_string s)
+			| TBool b -> HVBool b			
+			| TNull -> error ("In Flash9, null can't be used as basic type " ^ s_type (print_context()) t) p
+			| _ -> assert false)
+		| _, Some TNull -> HVNone
+		| k, Some c ->
+			write ctx (HReg r.rid);
+			write ctx HNull;
+			let j = jump ctx J3Neq in
+			gen_constant ctx c t p;
+			coerce ctx k;
+			write ctx (HSetReg r.rid);
+			j();
+			HVNone
+		) in
+		match !dparams with
+		| None -> if c <> None then dparams := Some [v]
+		| Some l -> dparams := Some (v :: l)		
+	in
+
+	List.iter (fun (name,c,t) ->
+		define_local ctx name ~init:true t el p;		
 		match gen_local_access ctx name null_pos Write with
-		| VReg _ -> ()
+		| VReg r ->
+			make_constant_value r c t
 		| acc ->
 			let r = alloc_reg ctx (classify ctx t) in
+			make_constant_value r c t;
 			write ctx (HReg r.rid);
 			setvar ctx acc None
 	) args;
+
+	let dparams = (match !dparams with None -> None | Some l -> Some (List.rev l)) in
 	let args, varargs = (match args with
 		| ["__arguments__",_,_] -> [], true
 		| _ -> args, false
@@ -679,7 +727,7 @@ let begin_fun ctx args tret el stat p =
 			) (List.rev ctx.trys));
 			hlf_locals = Array.of_list (List.map (fun (id,name,t) -> ident name, t, id, false) ctx.block_vars);
 		} in
-		let mt = { (end_fun ctx args tret) with
+		let mt = { (end_fun ctx args dparams tret) with
 			hlmt_var_args = varargs;
 			hlmt_new_block = hasblock;
 			hlmt_function = Some f;
@@ -716,33 +764,6 @@ let begin_loop ctx =
 		ctx.breaks <- old_breaks;
 		ctx.continues <- old_conts;
 	)
-
-let gen_constant ctx c t p =
-	match c with
-	| TInt i ->
-		let unsigned = classify ctx t = KUInt in
-		if Int32.compare i (-128l) > 0 && Int32.compare i 128l < 0 then begin
-			write ctx (HSmallInt (Int32.to_int i));
-			if unsigned then write ctx HToUInt;
-		end else
-			write ctx (if unsigned then HUIntRef i else HIntRef i)
-	| TFloat f ->
-		let f = float_of_string f in
-		write ctx (HFloat f);
-	| TString s ->
-		write ctx (HString (Genswf8.to_utf8 s));
-	| TBool b ->
-		write ctx (if b then HTrue else HFalse);
-	| TNull ->
-		write ctx HNull;
-		(match classify ctx t with
-		| KInt | KBool | KUInt | KFloat ->
-			error ("In Flash9, null can't be used as basic type " ^ s_type (print_context()) t) p
-		| x -> coerce ctx x)
-	| TThis ->
-		write ctx HThis
-	| TSuper ->
-		assert false
 
 let no_value ctx retval =
 	(* does not push a null but still increment the stack like if
@@ -1642,7 +1663,17 @@ let generate_method ctx fdata stat =
 
 let generate_construct ctx fdata c =
 	(* make all args optional to allow no-param constructor *)
-	let f = begin_fun ctx (List.map (fun (a,c,t) -> a,(match c with None -> Some TNull | _ -> c),t) fdata.tf_args) fdata.tf_type [ethis;fdata.tf_expr] false fdata.tf_expr.epos in
+	let cargs = List.map (fun (a,c,t) -> 
+		let c = (match c with Some _ -> c | None ->
+			Some (match classify ctx t with
+			| KInt | KUInt -> TInt 0l
+			| KFloat -> TFloat "0"
+			| KBool -> TBool false
+			| KType _ | KDynamic | KNone -> TNull)			
+		) in
+		a,c,t
+	) fdata.tf_args in
+	let f = begin_fun ctx cargs fdata.tf_type [ethis;fdata.tf_expr] false fdata.tf_expr.epos in
 	(* if skip_constructor, then returns immediatly *)
 	(match c.cl_kind with
 	| KGenericInstance _ -> ()
@@ -1673,17 +1704,61 @@ let generate_construct ctx fdata c =
 	write ctx HRetVoid;
 	f() , List.length fdata.tf_args
 
-let generate_class_statics ctx c =
+let rec is_const e = 
+	match e.eexpr with
+	| TConst _ -> true
+	| TArrayDecl el | TBlock el -> List.for_all is_const el
+	| TObjectDecl fl -> List.for_all (fun (_,e) -> is_const e) fl
+	| TParenthesis e -> is_const e
+	| TFunction _ -> true		
+	| _ -> false
+
+let generate_class_statics ctx c const =
 	List.iter (fun f ->
 		match f.cf_expr with
-		| None -> ()
 		| Some { eexpr = TFunction _ } when (match f.cf_kind with Method (MethNormal | MethInline) -> true | _ -> false) -> ()
-		| Some e ->
+		| Some e when is_const e = const ->
 			write ctx (HGetLex (type_path ctx c.cl_path));
 			gen_expr ctx true e;
 			if Codegen.is_volatile f.cf_type then write ctx (HArray 1);
 			write ctx (HInitProp (ident f.cf_name));
+		| _ -> ()
 	) c.cl_ordered_statics
+
+let need_init ctx c =
+	not ctx.swc && not c.cl_extern && List.exists (fun f -> match f.cf_expr with Some e -> not (is_const e) | _ -> false) c.cl_ordered_statics
+
+let generate_inits ctx =
+	let finit = begin_fun ctx [] ctx.com.basic.tvoid [] true null_pos in
+	List.iter (fun t ->
+		match t with
+		| TClassDecl c when c.cl_extern ->
+			(match c.cl_init with
+			| None -> ()
+			| Some e -> gen_expr ctx false e);
+		| _ -> ()
+	) ctx.com.types;
+	List.iter (fun t ->
+		match t with
+		| TClassDecl c when need_init ctx c ->
+			let id = ident "init__" in
+			getvar ctx (VGlobal (type_path ctx c.cl_path));
+			getvar ctx (VId id);
+			let j = jump ctx J3True in
+			getvar ctx (VGlobal (type_path ctx c.cl_path));
+			write ctx HTrue;
+			setvar ctx (VId id) None;
+			let branch = begin_branch ctx in
+			generate_class_statics ctx c false;
+			branch();
+			j()
+		| _ -> ()
+	) ctx.com.types;
+	(match ctx.com.main with
+	| None -> ()
+	| Some e -> gen_expr ctx false e);
+	write ctx HRetVoid;
+	finit()
 
 let generate_class_init ctx c hc =
 	write ctx HGetGlobalScope;
@@ -1706,7 +1781,17 @@ let generate_class_init ctx c hc =
 	) c.cl_ordered_statics;
 	if not c.cl_interface then write ctx HPopScope;
 	write ctx (HInitProp (type_path ctx c.cl_path));
-	if ctx.swc then generate_class_statics ctx c
+	(match c.cl_init with
+	| None -> ()
+	| Some e ->
+		gen_expr ctx false e;
+		if ctx.block_vars <> [] then error "You can't have a local variable referenced from a closure inside __init__ (FP 10.1.53 crash)" e.epos;
+	);
+	generate_class_statics ctx c true;
+	if ctx.swc then begin
+		generate_class_statics ctx c false;
+		if ctx.block_vars <> [] then error "You can't have a local variable referenced from a closure inside a static (FP 10.1.53 crash)" c.cl_pos;
+	end
 
 let generate_enum_init ctx e hc meta =
 	let path = ([],"Object") in
@@ -1751,7 +1836,7 @@ let generate_enum_init ctx e hc meta =
 let extract_meta meta =
 	let rec loop = function
 		| [] -> []
-		| (":meta",[ECall ((EConst (Ident n | Type n),_),args),_]) :: l ->
+		| (":meta",[ECall ((EConst (Ident n | Type n),_),args),_],_) :: l ->
 			let mk_arg (a,p) =
 				match a with
 				| EConst (String s) -> (None, s)
@@ -1784,8 +1869,8 @@ let generate_field_kind ctx f c stat =
 		| _ ->
 			let rec lookup_kind = function
 				| [] -> f.cf_name, MK3Normal
-				| (":getter",[EConst (Ident f | Type f),_]) :: _ -> f, MK3Getter
-				| (":setter",[EConst (Ident f | Type f),_]) :: _ -> f, MK3Setter
+				| (":getter",[EConst (Ident f | Type f),_],_) :: _ -> f, MK3Getter
+				| (":setter",[EConst (Ident f | Type f),_],_) :: _ -> f, MK3Setter
 				| _ :: l -> lookup_kind l
 			in
 			let name, kind = lookup_kind f.cf_meta in
@@ -1799,8 +1884,15 @@ let generate_field_kind ctx f c stat =
 	| _ when c.cl_interface && not stat ->
 		(match follow f.cf_type, f.cf_kind with
 		| TFun (args,tret), Method (MethNormal | MethInline) ->
+			let dparams = ref None in
+			List.iter (fun (_,o,t) ->
+				match !dparams with
+				| None -> if o then dparams := Some [HVNone]
+				| Some l -> dparams := Some (HVNone :: l)
+			) args;
+			let dparams = (match !dparams with None -> None | Some l -> Some (List.rev l)) in
 			Some (HFMethod {
-				hlm_type = end_fun ctx (List.map (fun (a,opt,t) -> a, (if opt then Some TNull else None), t) args) tret;
+				hlm_type = end_fun ctx (List.map (fun (a,opt,t) -> a, (if opt then Some TNull else None), t) args) dparams tret;
 				hlm_final = false;
 				hlm_override = false;
 				hlm_kind = MK3Normal;
@@ -1838,7 +1930,7 @@ let generate_class ctx c =
 			| _ -> assert false
 	) in
 	let has_protected = ref None in
-	let fields = Array.of_list (PMap.fold (fun f acc ->
+	let fields = PMap.fold (fun f acc ->
 		match generate_field_kind ctx f c false with
 		| None -> acc
 		| Some k ->
@@ -1856,9 +1948,9 @@ let generate_class ctx c =
 				| [] -> ident f.cf_name
 				| x :: l ->
 					match x with
-					| ((":getter" | ":setter"),[EConst (Ident f | Type f),_]) -> ident f
-					| (":ns",[EConst (String ns),_]) -> HMName (f.cf_name,HNNamespace ns)
-					| (":protected",[]) ->
+					| ((":getter" | ":setter"),[EConst (Ident f | Type f),_],_) -> ident f
+					| (":ns",[EConst (String ns),_],_) -> HMName (f.cf_name,HNNamespace ns)
+					| (":protected",[],_) ->
 						let p = (match c.cl_path with [], n -> n | p, n -> String.concat "." p ^ ":" ^ n) in
 						has_protected := Some p;
 						HMName (f.cf_name,HNProtected p)
@@ -1875,9 +1967,41 @@ let generate_class ctx c =
 				hlf_kind = k;
 				hlf_metas = extract_meta f.cf_meta;
 			} :: acc
-	) c.cl_fields []) in
+	) c.cl_fields [] in
+	let fields = if c.cl_path <> ctx.boot then fields else
+		{
+			hlf_name = ident "init";
+			hlf_slot = 0;
+			hlf_kind = (HFMethod {
+				hlm_type = generate_inits ctx;
+				hlm_final = false;
+				hlm_override = true;
+				hlm_kind = MK3Normal;
+			});
+			hlf_metas = None;
+		} :: fields
+	in
 	let st_field_count = ref 0 in
 	let st_meth_count = ref 0 in
+	let statics = List.map (fun f ->
+		let k = (match generate_field_kind ctx f c true with None -> assert false | Some k -> k) in
+		let count = (match k with HFMethod _ -> st_meth_count | HFVar _ -> st_field_count | _ -> assert false) in
+		incr count;
+		{
+			hlf_name = ident f.cf_name;
+			hlf_slot = !count;
+			hlf_kind = k;
+			hlf_metas = extract_meta f.cf_meta;
+		}
+	) c.cl_ordered_statics in
+	let statics = if not (need_init ctx c) then statics else  
+		{
+			hlf_name = ident "init__";
+			hlf_slot = (incr st_field_count; !st_field_count);
+			hlf_kind = HFVar { hlv_type = (Some (type_id ctx ctx.com.basic.tbool)); hlv_value = HVNone; hlv_const = false; };
+			hlf_metas = None;
+		} :: statics
+	in
 	let rec is_dynamic c =
 		if c.cl_dynamic <> None || c.cl_array_access <> None then true
 		else match c.cl_super with
@@ -1898,19 +2022,9 @@ let generate_class ctx c =
 			HMMultiName (Some name,[HNPublic (Some (String.concat "." pack))])
 		) c.cl_implements);
 		hlc_construct = cid;
-		hlc_fields = fields;
+		hlc_fields = Array.of_list fields;
 		hlc_static_construct = empty_method ctx c.cl_pos;
-		hlc_static_fields = Array.of_list (List.map (fun f ->
-			let k = (match generate_field_kind ctx f c true with None -> assert false | Some k -> k) in
-			let count = (match k with HFMethod _ -> st_meth_count | HFVar _ -> st_field_count | _ -> assert false) in
-			incr count;
-			{
-				hlf_name = ident f.cf_name;
-				hlf_slot = !count;
-				hlf_kind = k;
-				hlf_metas = extract_meta f.cf_meta;
-			}
-		) c.cl_ordered_statics);
+		hlc_static_fields = Array.of_list statics;
 	}
 
 let generate_enum ctx e meta =
@@ -2019,40 +2133,16 @@ let generate_enum ctx e meta =
 		} :: constrs);
 	}
 
-
-let generate_inits ctx =
-	(* define flash.Boot.init method *)
-	write ctx HGetGlobalScope;
-	write ctx (HGetProp (type_path ctx (["flash"],"Boot")));
-	let finit = begin_fun ctx [] ctx.com.basic.tvoid [] true null_pos in
-	List.iter (fun t ->
-		match t with
-		| TClassDecl c ->
-			(match c.cl_init with
-			| None -> ()
-			| Some e -> gen_expr ctx false e);
-		| _ -> ()
-	) ctx.com.types;
-	if not ctx.swc then List.iter (fun t ->
-		match t with
-		| TClassDecl { cl_extern = true } -> ()
-		| TClassDecl c -> generate_class_statics ctx c
-		| _ -> ()
-	) ctx.com.types;
-	write ctx HRetVoid;
-	write ctx (HFunction (finit()));
-	write ctx (HInitProp (ident "init"))
-
 let generate_type ctx t =
 	match t with
 	| TClassDecl c ->
+		if c.cl_path = (["flash";"_Boot"],"RealBoot") then c.cl_path <- ctx.boot;
 		if c.cl_extern && c.cl_path <> ([],"Dynamic") then
 			None
 		else
 			let hlc = generate_class ctx c in
 			let init = begin_fun ctx [] ctx.com.basic.tvoid [ethis] false c.cl_pos in
 			generate_class_init ctx c hlc;
-			if c.cl_path = (["flash"],"Boot") then generate_inits ctx;
 			write ctx HRetVoid;
 			Some (init(), {
 				hlf_name = type_path ctx c.cl_path;
@@ -2078,9 +2168,10 @@ let generate_type ctx t =
 	| TTypeDecl _ ->
 		None
 
-let generate com =
+let generate com boot_name =
 	let ctx = {
 		com = com;
+		boot = ([],boot_name);
 		debugger = Common.defined com "fdb";
 		swc = Common.defined com "swc";
 		code = DynArray.create();

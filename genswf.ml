@@ -186,6 +186,8 @@ let rec make_tpath = function
 		assert false
 	| HMAttrib _ ->
 		assert false
+	| HMAny ->
+		assert false
 	| HMParams (t,params) ->
 		let params = List.map (fun t -> TPType (CTPath (make_tpath t))) params in
 		{ (make_tpath t) with tparams = params }
@@ -212,7 +214,7 @@ let build_class com c file =
 		let i = (match i with
 			| HMMultiName (Some id,ns) ->
 				let rec loop = function
-					| [] -> assert false
+					| [] -> HMPath ([],id)
 					| HNPublic (Some ns) :: _ -> HMPath (ExtString.String.nsplit ns ".",id)
 					| _ :: l -> loop l
 				in
@@ -252,7 +254,7 @@ let build_class com c file =
 		let flags = if stat then AStatic :: flags else flags in
 		let name = (make_tpath f.hlf_name).tname in
 		let mk_meta() =
-			List.map (fun (s,cl) -> s, List.map (fun c -> EConst c,pos) cl) (!meta)
+			List.map (fun (s,cl) -> s, List.map (fun c -> EConst c,pos) cl, pos) (!meta)
 		in
 		let cf = {
 			cff_name = name;
@@ -350,7 +352,7 @@ let build_class com c file =
 			| None, None -> assert false
 			| Some t, None -> true, false, t
 			| None, Some t -> false, true, t
-			| Some t1, Some t2 -> if t1 <> t2 then assert false; true, true, t1
+			| Some t1, Some t2 -> true, true, (if t1 <> t2 then None else t1)
 		) in
 		let flags = [APublic] in
 		let flags = if stat then AStatic :: flags else flags in
@@ -360,7 +362,7 @@ let build_class com c file =
 			cff_doc = None;
 			cff_access = flags;
 			cff_meta = [];
-			cff_kind = FProp ((if get then "default" else "never"),(if set then "default" else "never"),make_type t);
+			cff_kind = if get && set then FVar (Some (make_type t), None) else FProp ((if get then "default" else "never"),(if set then "default" else "never"),make_type t);
 		}
 	in
 	let fields = Hashtbl.fold (fun (name,stat) t acc ->
@@ -376,11 +378,14 @@ let build_class com c file =
 		(*
 			If the class only contains static String constants, make it an enum
 		*)
+		let real_type = ref "" in
 		let rec loop = function
 			| [] -> []
 			| f :: l ->
 				match f.cff_kind with
-				| FVar (Some (CTPath { tpackage = []; tname = "String" | "Int" | "UInt" }),None) when List.mem AStatic f.cff_access -> (f.cff_name,None,[],[],pos) :: loop l
+				| FVar (Some (CTPath { tpackage = []; tname = ("String" | "Int" | "UInt") as tname }),None) when List.mem AStatic f.cff_access ->
+					if !real_type = "" then real_type := tname else if !real_type <> tname then raise Exit;
+					(f.cff_name,None,[],[],pos) :: loop l
 				| FFun (_,{ f_args = [] }) when f.cff_name = "new" -> loop l
 				| _ -> raise Exit
 		in
@@ -396,7 +401,7 @@ let build_class com c file =
 			d_name = path.tname;
 			d_doc = None;
 			d_params = [];
-			d_meta = [];
+			d_meta = [(":fakeEnum",[EConst (Type !real_type),pos],pos)];
 			d_flags = [EExtern];
 			d_data = constr;
 		} in
@@ -406,7 +411,7 @@ let build_class com c file =
 		d_name = path.tname;
 		d_doc = None;
 		d_params = [];
-		d_meta = if c.hlc_final && List.exists (fun f -> f.cff_name <> "new" && not (List.mem AStatic f.cff_access)) fields then [":final",[]] else [];
+		d_meta = if c.hlc_final && List.exists (fun f -> f.cff_name <> "new" && not (List.mem AStatic f.cff_access)) fields then [":final",[],pos] else [];
 		d_flags = flags;
 		d_data = fields;
 	} in
@@ -523,7 +528,7 @@ let parse_swf com file =
 			IO.close_in ch;
 			List.iter (fun t ->
 				match t.tdata with
-				| TActionScript3 (id,as3) when not com.debug && not !Common.display ->
+				| TActionScript3 (id,as3) when not com.debug && not com.display ->
 					t.tdata <- TActionScript3 (id,remove_debug_infos as3)
 				| _ -> ()
 			) tags;
@@ -794,8 +799,9 @@ let build_swf8 com codeclip exports =
 	) in
 	clips @ code
 
-let build_swf9 com swc =
-	let code = Genswf9.generate com in
+let build_swf9 com file swc =
+	let boot_name = if swc <> None || Common.defined com "haxe-boot" then "haxe" else "boot_" ^ (String.sub (Digest.to_hex (Digest.string file)) 0 4) in
+	let code = Genswf9.generate com boot_name in
 	let code = (match swc with
 	| Some cat ->
 		cat := build_swc_catalog com (List.map (fun (t,_,_) -> t) code);
@@ -819,7 +825,7 @@ let build_swf9 com swc =
 		) code in
 		[tag (TActionScript3 (None,As3hlparse.flatten inits))]
 	) in
-	let clips = [tag (TF9Classes [{ f9_cid = None; f9_classname = "flash.Boot" }])] in
+	let clips = [tag (TF9Classes [{ f9_cid = None; f9_classname = boot_name }])] in
 	code @ clips
 
 let merge com file priority (h1,tags1) (h2,tags2) =
@@ -941,7 +947,7 @@ let generate com swf_header =
 		) tags;
 	) com.swf_libs;
   (* build haxe swf *)
-	let tags = if isf9 then build_swf9 com swc else build_swf8 com codeclip exports in
+	let tags = if isf9 then build_swf9 com file swc else build_swf8 com codeclip exports in
 	let header, bg = (match swf_header with None -> default_header com | Some h -> convert_header com h) in
 	let bg = tag (TSetBgColor { cr = bg lsr 16; cg = (bg lsr 8) land 0xFF; cb = bg land 0xFF }) in
 	let debug = (if isf9 && Common.defined com "fdb" then [tag (TEnableDebugger2 (0,""))] else []) in

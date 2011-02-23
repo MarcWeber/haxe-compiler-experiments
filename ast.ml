@@ -176,7 +176,7 @@ and expr_def =
 	| ENew of type_path * expr list
 	| EUnop of unop * unop_flag * expr
 	| EVars of (string * complex_type option * expr option) list
-	| EFunction of func
+	| EFunction of string option * func
 	| EBlock of expr list
 	| EFor of string * expr * expr
 	| EIf of expr * expr * expr option
@@ -199,7 +199,7 @@ type type_param = string * type_path list
 
 type documentation = string option
 
-type metadata = (string * expr list) list
+type metadata = (string * expr list * pos) list
 
 type access =
 	| APublic
@@ -304,6 +304,14 @@ let s_constant = function
 	| Ident s -> s
 	| Type s -> s
 	| Regexp (r,o) -> "~/" ^ r ^ "/"
+
+let s_access = function
+	| APublic -> "public"
+	| APrivate -> "private"
+	| AStatic -> "static"
+	| AOverride -> "override"
+	| ADynamic -> "dynamic"
+	| AInline -> "inline"
 
 let s_keyword = function
 	| Function -> "function"
