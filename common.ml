@@ -60,9 +60,9 @@ type context = {
 	mutable package_rules : (string,package_rule) PMap.t;
 	mutable error : string -> pos -> unit;
 	mutable warning : string -> pos -> unit;
-	mutable js_namespace : string option;
 	mutable load_extern_type : (path -> pos -> Ast.package option) list; (* allow finding types which are not in sources *)
 	mutable filters : (unit -> unit) list;
+	mutable defines_signature : string option;
 	(* output *)
 	mutable file : string;
 	mutable flash_version : float;
@@ -70,17 +70,37 @@ type context = {
 	mutable main : Type.texpr option;
 	mutable types : Type.module_type list;
 	mutable resources : (string,string) Hashtbl.t;
+	mutable neko_libs : string list;
 	mutable php_front : string option;
 	mutable php_lib : string option;
+	mutable php_prefix : string option;
 	mutable swf_libs : (string * (unit -> Swf.swf) * (unit -> ((string list * string),As3hl.hl_class) Hashtbl.t)) list;
 	mutable js_gen : (unit -> unit) option;
 	(* typing *)
 	mutable basic : basic_types;
 }
 
+type global_cache = {
+	cache_version : int;
+	mutable cache_file : string option;
+	mutable cached_haxelib : (string list, string list) Hashtbl.t;
+	mutable cached_files : (string, float * Ast.package) Hashtbl.t;
+}
+
 exception Abort of string * Ast.pos
 
 let display_default = ref false
+
+let cache_version = 1
+let global_cache : global_cache option ref = ref None
+
+let create_cache() =
+	{
+		cache_version = cache_version;
+		cache_file = None;
+		cached_files = Hashtbl.create 0;
+		cached_haxelib = Hashtbl.create 0;
+	}
 
 let create v =
 	let m = Type.mk_mono() in
@@ -95,7 +115,7 @@ let create v =
 		std_path = [];
 		class_path = [];
 		main_class = None;
-		defines = PMap.add "true" () PMap.empty;
+		defines = PMap.add "true" () (if !display_default then PMap.add "display" () PMap.empty else PMap.empty);
 		package_rules = PMap.empty;
 		file = "";
 		types = [];
@@ -107,9 +127,11 @@ let create v =
 		php_front = None;
 		php_lib = None;
 		swf_libs = [];
-		js_namespace = None;
+		neko_libs = [];
+		php_prefix = None;
 		js_gen = None;
 		load_extern_type = [];
+		defines_signature = None;
 		warning = (fun _ _ -> assert false);
 		error = (fun _ _ -> assert false);
 		basic = {
@@ -120,7 +142,7 @@ let create v =
 			tnull = (fun _ -> assert false);
 			tstring = m;
 			tarray = (fun _ -> assert false);
-		};		
+		};
 	}
 
 let clone com =
@@ -145,12 +167,19 @@ let platform_name = function
 	| Php -> "php"
 	| Cpp -> "cpp"
 
+let flash_versions = List.map (fun v ->
+	let maj = int_of_float v in
+	let min = int_of_float (mod_float (v *. 10.) 10.) in
+	v, string_of_int maj ^ (if min = 0 then "" else "_" ^ string_of_int min)
+) [9.;10.;10.1;10.2;10.3;11.;11.1;11.2]
+
 let defined ctx v = PMap.mem v ctx.defines
 
 let define ctx v =
 	ctx.defines <- PMap.add v () ctx.defines;
 	let v = String.concat "_" (ExtString.String.nsplit v "-") in
-	ctx.defines <- PMap.add v () ctx.defines
+	ctx.defines <- PMap.add v () ctx.defines;
+	ctx.defines_signature <- None
 
 let init_platform com pf =
 	com.platform <- pf;
@@ -178,13 +207,13 @@ let find_file ctx f =
 	in
 	loop ctx.class_path
 
-let get_full_path = Extc.get_full_path
+let get_full_path f = try Extc.get_full_path f with _ -> f
 
 (* ------------------------- TIMERS ----------------------------- *)
 
 type timer_infos = {
 	name : string;
-	mutable start : float;
+	mutable start : float list;
 	mutable total : float;
 }
 
@@ -194,20 +223,24 @@ let htimers = Hashtbl.create 0
 let new_timer name =
 	try
 		let t = Hashtbl.find htimers name in
-		t.start <- get_time();
+		t.start <- get_time() :: t.start;
 		t
 	with Not_found ->
-		let t = { name = name; start = get_time(); total = 0.; } in
+		let t = { name = name; start = [get_time()]; total = 0.; } in
 		Hashtbl.add htimers name t;
 		t
 
 let curtime = ref []
 
 let close t =
-	let dt = get_time() -. t.start in
+	let start = (match t.start with
+		| [] -> assert false
+		| s :: l -> t.start <- l; s
+	) in
+	let dt = get_time() -. start in
 	t.total <- t.total +. dt;
 	curtime := List.tl !curtime;
-	List.iter (fun ct -> ct.start <- ct.start +. dt) !curtime
+	List.iter (fun ct -> ct.start <- List.map (fun t -> t +. dt) ct.start) !curtime
 
 let timer name =
 	let t = new_timer name in
@@ -217,4 +250,4 @@ let timer name =
 let rec close_time() =
 	match !curtime with
 	| [] -> ()
-	| t :: _ -> close t	
+	| t :: _ -> close t

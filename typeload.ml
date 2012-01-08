@@ -21,6 +21,18 @@ open Type
 open Common
 open Typecore
 
+let parse_file com file p =
+	let ch = (try open_in_bin file with _ -> error ("Could not open " ^ file) p) in
+	let t = Common.timer "parsing" in
+	Lexer.init file;
+	let data = (try Parser.parse com (Lexing.from_channel ch) with e -> close_in ch; t(); raise e) in
+	close_in ch;
+	t();
+	if com.verbose then print_endline ("Parsed " ^ file);
+	data
+
+let parse_hook = ref parse_file
+
 let type_function_param ctx t e opt p =
 	match e with
 	| None ->
@@ -29,7 +41,7 @@ let type_function_param ctx t e opt p =
 		t, Some e
 
 let type_static_var ctx t e p =
-	ctx.in_static <- true;
+	ctx.curfun <- FStatic;
 	let e = type_expr ctx e true in
 	unify ctx e.etype t p;
 	(* specific case for UInt statics *)
@@ -37,12 +49,12 @@ let type_static_var ctx t e p =
 	| TType ({ t_path = ([],"UInt") },[]) -> { e with etype = t }
 	| _ -> e
 
-let apply_macro ctx path el p =
+let apply_macro ctx mode path el p =
 	let cpath, meth = (match List.rev (ExtString.String.nsplit path ".") with
 		| meth :: name :: pack -> (List.rev pack,name), meth
 		| _ -> error "Invalid macro path" p
 	) in
-	ctx.g.do_macro ctx cpath meth el p
+	ctx.g.do_macro ctx mode cpath meth el p
 
 (** since load_type_def and load_instance are used in PASS2, they should not access the structure of a type **)
 
@@ -64,7 +76,7 @@ let rec load_type_def ctx p t =
 				let m = ctx.g.do_load_module ctx (t.tpackage,t.tname) p in
 				let tpath = (t.tpackage,tname) in
 				try
-					List.find (fun t -> not (t_private t) && t_path t = tpath) m.mtypes
+					List.find (fun t -> not (t_infos t).mt_private && t_path t = tpath) m.mtypes
 				with
 					Not_found -> raise (Error (Type_not_found (m.mpath,tname),p))
 			in
@@ -130,20 +142,20 @@ let rec load_instance ctx t p allow_no_params =
 			if List.length types <> List.length t.tparams then error ("Invalid number of type parameters for " ^ s_type_path path) p;
 			let tparams = List.map (fun t ->
 				match t with
-				| TPConst c ->
-					let name, const = (match c with
-						| String s -> "S" ^ s, TString s
-						| Int i -> "I" ^ i, TInt (Int32.of_string i)
-						| Float f -> "F" ^ f, TFloat f
-						| _ -> assert false
+				| TPExpr e ->
+					let name = (match fst e with
+						| EConst (String s) -> "S" ^ s
+						| EConst (Int i) -> "I" ^ i
+						| EConst (Float f) -> "F" ^ f
+						| _ -> "Expr"			
 					) in
 					let c = mk_class ([],name) p in
-					c.cl_kind <- KConstant const;
+					c.cl_kind <- KExpr e;
 					TInst (c,[])
 				| TPType t -> load_complex_type ctx p t
 			) t.tparams in
 			let params = List.map2 (fun t (name,t2) ->
-				let isconst = (match t with TInst ({ cl_kind = KConstant _ },_) -> true | _ -> false) in
+				let isconst = (match t with TInst ({ cl_kind = KExpr _ },_) -> true | _ -> false) in
 				if isconst <> (name = "Const") && t != t_dynamic then error (if isconst then "Constant value unexpected here" else "Constant value excepted as type parameter") p;
 				match follow t2 with
 				| TInst ({ cl_implements = [] }, []) ->
@@ -167,6 +179,7 @@ and load_complex_type ctx p t =
 	match t with
 	| CTParent t -> load_complex_type ctx p t
 	| CTPath t -> load_instance ctx t p false
+	| CTOptional _ -> error "Optional type not allowed here" p
 	| CTExtend (t,l) ->
 		(match load_complex_type ctx p (CTAnonymous l) with
 		| TAnon a ->
@@ -199,16 +212,38 @@ and load_complex_type ctx p t =
 			loop (load_instance ctx t p false)
 		| _ -> assert false)
 	| CTAnonymous l ->
-		let rec loop acc (n,pub,f,p) =
+		let rec loop acc f =
+			let n = f.cff_name in
+			let p = f.cff_pos in
 			if PMap.mem n acc then error ("Duplicate field declaration : " ^ n) p;
-			let t , access = (match f with
-				| AFVar t ->
-					load_complex_type ctx p t, Var { v_read = AccNormal; v_write = AccNormal }
-				| AFFun (tl,t) ->
-					let t = load_complex_type ctx p t in
-					let args = List.map (fun (name,o,t) -> name , o, load_complex_type ctx p t) tl in
-					TFun (args,t), Method MethNormal
-				| AFProp (t,i1,i2) ->
+			let topt = function
+				| None -> error ("Explicit type required for field " ^ n) p
+				| Some t -> load_complex_type ctx p t
+			in
+			let no_expr = function
+				| None -> ()
+				| Some (_,p) -> error "Expression not allowed here" p
+			in
+			let pub = ref true in
+			let dyn = ref false in
+			List.iter (fun a ->
+				match a with
+				| APublic -> ()
+				| APrivate -> pub := false;
+				| ADynamic when (match f.cff_kind with FFun _ -> true | _ -> false) -> dyn := true
+				| AStatic | AOverride | AInline | ADynamic -> error ("Invalid access " ^ Ast.s_access a) p
+			) f.cff_access;
+			let t , access = (match f.cff_kind with
+				| FVar (t, e) ->
+					no_expr e;
+					topt t, Var { v_read = AccNormal; v_write = AccNormal }
+				| FFun f ->
+					if f.f_params <> [] then error "Type parameters are not allowed in structures" p;
+					no_expr f.f_expr;
+					let args = List.map (fun (name,o,t,e) -> no_expr e; name, o, topt t) f.f_args in
+					TFun (args,topt f.f_type), Method (if !dyn then MethDynamic else MethNormal)
+				| FProp (i1,i2,t,e) ->
+					no_expr e;
 					let access m get =
 						match m with
 						| "null" -> AccNo
@@ -222,12 +257,13 @@ and load_complex_type ctx p t =
 			PMap.add n {
 				cf_name = n;
 				cf_type = t;
-				cf_public = (match pub with None -> true | Some p -> p);
+				cf_pos = p;
+				cf_public = !pub;
 				cf_kind = access;
 				cf_params = [];
 				cf_expr = None;
-				cf_doc = None;
-				cf_meta = no_meta;
+				cf_doc = f.cff_doc;
+				cf_meta = f.cff_meta;
 			} acc
 		in
 		mk_anon (List.fold_left loop PMap.empty l)
@@ -236,7 +272,10 @@ and load_complex_type ctx p t =
 		| [CTPath { tpackage = []; tparams = []; tname = "Void" }] ->
 			TFun ([],load_complex_type ctx p r)
 		| _ ->
-			TFun (List.map (fun t -> "",false,load_complex_type ctx p t) args,load_complex_type ctx p r)
+			TFun (List.map (fun t ->
+				let t, opt = (match t with CTOptional t -> t, true | _ -> t,false) in
+				"",opt,load_complex_type ctx p t
+			) args,load_complex_type ctx p r)
 
 let hide_types ctx =
 	let old_locals = ctx.local_types in
@@ -312,6 +351,10 @@ let check_overriding ctx c p () =
 		PMap.iter (fun i f ->
 			try
 				let t , f2 = raw_class_field (fun f -> f.cf_type) csup i in
+				(* allow to define fields that are not defined for this platform version in superclass *)
+				(match f2.cf_kind with
+				| Var { v_read = AccRequire _ } -> raise Not_found;
+				| _ -> ());
 				ignore(follow f.cf_type); (* force evaluation *)
 				let p = (match f.cf_expr with None -> p | Some e -> e.epos) in
 				if not (List.mem i c.cl_overrides) then
@@ -357,9 +400,14 @@ let rec check_interface ctx c p intf params =
 			let t2, f2 = class_field_no_interf c i in
 			ignore(follow f2.cf_type); (* force evaluation *)
 			let p = (match f2.cf_expr with None -> p | Some e -> e.epos) in
+			let mkind = function
+				| MethNormal | MethInline -> 0
+				| MethDynamic -> 1
+				| MethMacro -> 2
+			in
 			if f.cf_public && not f2.cf_public then
 				display_error ctx ("Field " ^ i ^ " should be public as requested by " ^ s_type_path intf.cl_path) p
-			else if not (unify_kind f2.cf_kind f.cf_kind) then
+			else if not (unify_kind f2.cf_kind f.cf_kind) || not (match f.cf_kind, f2.cf_kind with Var _ , Var _ -> true | Method m1, Method m2 -> mkind m1 = mkind m2 | _ -> false) then
 				display_error ctx ("Field " ^ i ^ " has different property access than in " ^ s_type_path intf.cl_path ^ " (" ^ s_kind f2.cf_kind ^ " should be " ^ s_kind f.cf_kind ^ ")") p
 			else try
 				valid_redefinition ctx f2 t2 f (apply_params intf.cl_types params f.cf_type)
@@ -409,7 +457,7 @@ let rec return_flow ctx e =
 		(match def with None -> () | Some e -> return_flow e)
 	| TTry (e,cases) ->
 		return_flow e;
-		List.iter (fun (_,_,e) -> return_flow e) cases;
+		List.iter (fun (_,e) -> return_flow e) cases;
 	| _ ->
 		error()
 
@@ -490,13 +538,13 @@ let type_type_params ctx path get_params p (n,flags) =
 		let r = exc_protect (fun r ->
 			r := (fun _ -> t);
 			let ctx = { ctx with type_params = ctx.type_params @ get_params() } in
-			set_heritance ctx c (List.map (fun t -> HImplements t) flags) p;
+			set_heritance ctx c (List.map (fun t -> match t with CTPath t -> HImplements t | _ -> error "Unsupported type constraint" p) flags) p;
 			t
 		) in
 		delay ctx (fun () -> ignore(!r()));
 		n, TLazy r
 
-let type_function ctx args ret static constr f p =
+let type_function ctx args ret fmode f p =
 	let locals = save_locals ctx in
 	let fargs = List.map (fun (n,c,t) ->
 		let c = (match c with
@@ -509,18 +557,15 @@ let type_function ctx args ret static constr f p =
 				| TConst c -> Some c
 				| _ -> display_error ctx "Parameter default value should be constant" p; None
 		) in
-		let n = add_local ctx n t in
-		n, c, t
+		add_local ctx n t, c
 	) args in
 	let old_ret = ctx.ret in
-	let old_static = ctx.in_static in
-	let old_constr = ctx.in_constructor in
+	let old_fun = ctx.curfun in
 	let old_opened = ctx.opened in
-	ctx.in_static <- static;
-	ctx.in_constructor <- constr;
+	ctx.curfun <- fmode;
 	ctx.ret <- ret;
 	ctx.opened <- [];
-	let e = type_expr ctx f.f_expr false in
+	let e = type_expr ctx (match f.f_expr with None -> error "Function body required" p | Some e -> e) false in
 	let rec loop e =
 		match e.eexpr with
 		| TReturn (Some _) -> raise Exit
@@ -538,17 +583,24 @@ let type_function ctx args ret static constr f p =
 		| TFunction _ -> ()
 		| _ -> Type.iter loop e
 	in
-	if constr && (match ctx.curclass.cl_super with None -> false | Some (cl,_) -> cl.cl_constructor <> None) then
+	if fmode = FConstructor && (match ctx.curclass.cl_super with None -> false | Some (cl,_) -> cl.cl_constructor <> None) then
 		(try
 			loop e;
 			display_error ctx "Missing super constructor call" p
 		with
 			Exit -> ());
 	locals();
+	let e = match ctx.curfun, ctx.vthis with
+		| (FMember|FConstructor), Some v ->
+			let ev = mk (TVars [v,Some (mk (TConst TThis) ctx.tthis p)]) ctx.t.tvoid p in
+			(match e.eexpr with
+			| TBlock l -> { e with eexpr = TBlock (ev::l) }
+			| _ -> mk (TBlock [ev;e]) e.etype p)
+		| _ -> e
+	in
 	List.iter (fun r -> r := Closed) ctx.opened;
 	ctx.ret <- old_ret;
-	ctx.in_static <- old_static;
-	ctx.in_constructor <- old_constr;
+	ctx.curfun <- old_fun;
 	ctx.opened <- old_opened;
 	e , fargs
 
@@ -614,11 +666,11 @@ let patch_class ctx c fields =
 	| Some (h,hcl) ->
 		c.cl_meta <- c.cl_meta @ hcl.tp_meta;
 		let rec loop acc = function
-			| [] -> List.rev acc
+			| [] -> acc
 			| f :: l ->
 				(* patch arguments types *)
 				(match f.cff_kind with
-				| FFun (pl,ff) ->
+				| FFun ff ->
 					let param ((n,opt,t,e) as p) =
 						try
 							let t2 = (try Hashtbl.find h (("$" ^ f.cff_name ^ "__" ^ n),false) with Not_found -> Hashtbl.find h (("$" ^ n),false)) in
@@ -626,7 +678,7 @@ let patch_class ctx c fields =
 						with Not_found ->
 							p
 					in
-					f.cff_kind <- FFun (pl,{ ff with f_args = List.map param ff.f_args })
+					f.cff_kind <- FFun { ff with f_args = List.map param ff.f_args }
 				| _ -> ());
 				(* other patches *)
 				match (try Some (Hashtbl.find h (f.cff_name,List.mem AStatic f.cff_access)) with Not_found -> None) with
@@ -639,13 +691,13 @@ let patch_class ctx c fields =
 					| Some t ->
 						f.cff_kind <- match f.cff_kind with
 						| FVar (_,e) -> FVar (Some t,e)
-						| FProp (get,set,_) -> FProp (get,set,t)
-						| FFun (pl,f) -> FFun (pl,{ f with f_type = Some t }));
+						| FProp (get,set,_,eo) -> FProp (get,set,t,eo)
+						| FFun f -> FFun { f with f_type = Some t });
 					loop (f :: acc) l
 		in
 		List.rev (loop [] fields)
 
-let build_module_def ctx meta fbuild =
+let build_module_def ctx mt meta fvars fbuild =
 	let rec loop = function
 		| (":build",args,p) :: l ->
 			let epath, el = (match args with
@@ -660,54 +712,36 @@ let build_module_def ctx meta fbuild =
 			in
 			let s = String.concat "." (List.rev (getpath epath)) in
 			if ctx.in_macro then error "You cannot used :build inside a macro : make sure that your enum is not used in macro" p;
-			(match apply_macro ctx s el p with
+			let old = ctx.g.get_build_infos in
+			ctx.g.get_build_infos <- (fun() -> Some (mt, fvars()));
+			let r = try apply_macro ctx MBuild s el p with e -> ctx.g.get_build_infos <- old; raise e in
+			ctx.g.get_build_infos <- old;
+			(match r with
 			| None -> error "Build failure" p
-			| Some e -> fbuild e) @ loop l
+			| Some e -> fbuild e; loop l)
 		| _ :: l -> loop l
-		| [] -> []
+		| [] -> ()
 	in
 	try
 		loop meta
 	with Error (Custom msg,p) ->
-		display_error ctx msg p;
-		[]
+		display_error ctx msg p
 
 let init_class ctx c p herits fields =
 	let fields = patch_class ctx c fields in
 	let ctx = { ctx with type_params = c.cl_types } in
 	c.cl_extern <- List.mem HExtern herits;
 	c.cl_interface <- List.mem HInterface herits;
+	if c.cl_path = (["haxe";"macro"],"MacroType") then c.cl_kind <- KMacroType;
 	set_heritance ctx c herits p;
-	let fields = fields @ build_module_def { ctx with curclass = c } c.cl_meta (fun (e,p) ->
+	let fields = ref fields in
+	let get_fields() = !fields in
+	build_module_def ctx (TClassDecl c) c.cl_meta get_fields (fun (e,p) ->
 		match e with
-		| EBlock el ->					
-			List.map (fun (e,p) ->
-				let n, k = (match e with
-				| EVars [v,t,e] -> v, FVar (t,e)
-				| EFunction (Some n,f) -> (if n = "__new__" then "new" else n), FFun ([],f)
-				| _ -> error "Class build expression should be a single variable or a named function" p
-				) in
-				let accesses = [APublic; APrivate; AStatic; AOverride; ADynamic; AInline] in
-				let k = ref k in
-				let rec loop acc l =
-					match l with
-					| [] -> error "Missing name" p
-					| "property" :: get :: set :: l ->
-						(match !k with
-						| FVar (Some t,None) -> k := FProp (get,set,t); loop acc l
-						| _ -> error "Invalid property declaration" p)
-					| x :: l ->
-						try
-							let a = List.find (fun a -> Ast.s_access a = x) accesses in
-							loop (a :: acc) l
-						with Not_found ->
-							String.concat "__" (x :: l), acc
-				in
-				let n, access = loop [] (ExtString.String.nsplit n "__") in
-				{ cff_name = n; cff_doc = None; cff_pos = p; cff_meta = []; cff_access = if access = [] then [APublic] else access; cff_kind = !k }
-			) el
-		| _ -> error "Class build macro must return a block" p
-	) in	
+		| EVars [_,Some (CTAnonymous f),None] -> fields := f
+		| _ -> error "Class build macro must return a single variable with anonymous fields" p
+	);
+	let fields = !fields in
 	let core_api = has_meta ":core_api" c.cl_meta in
 	let is_macro = has_meta ":macro" c.cl_meta in
 	let fields, herits = if is_macro && not ctx.in_macro then begin
@@ -758,7 +792,7 @@ let init_class ctx c p herits fields =
 			PMap.exists f c.cl_fields || has_field f c.cl_super || List.exists (fun i -> has_field f (Some i)) c.cl_implements
 	in
 
-	(* ----------------------- DEAD CODE REMOVAL ----------------------------- *)
+	(* ----------------------- DEAD CODE ELIMINATION ----------------------------- *)
 
 	let is_main n = (match ctx.com.main_class with | Some cl when c.cl_path = cl -> true | _ -> false) && n = "main" in
 	let must_keep_types pf = match pf with
@@ -769,8 +803,35 @@ let init_class ctx c p herits fields =
 		| Php -> [["php"], "Boot"]
 		| Cpp -> [["cpp"], "Boot"]
 		| _ -> [] in
-	let must_keep_class = (List.exists (fun p -> p = c.cl_path) (must_keep_types ctx.com.platform)) in
-	let keep f stat = core_api || (is_main f.cff_name) || c.cl_extern || must_keep_class || has_meta ":keep" c.cl_meta || has_meta ":keep" f.cff_meta || (stat && f.cff_name = "__init__") in
+	let must_keep_class =
+		List.exists (fun p -> p = c.cl_path) (must_keep_types ctx.com.platform)
+		|| c.cl_extern
+		|| has_meta ":keep" c.cl_meta 
+	in
+	let keep f stat =
+		   core_api 
+		|| (is_main f.cff_name)
+		|| must_keep_class 
+		|| has_meta ":keep" f.cff_meta 
+		|| (stat && f.cff_name = "__init__") 
+		|| (not stat 
+			&& f.cff_name = "resolve"
+			&& (match c.cl_dynamic with
+			| Some _ -> true
+			| None -> false
+			);
+		)
+	in
+	let rec setkeeper c =
+		match c.cl_super with
+		| Some (s,_) -> 
+			s.cl_meta <- if has_meta ":keep" s.cl_meta then s.cl_meta else begin
+				if ctx.com.verbose then print_endline ("Marking class " ^ (s_type_path s.cl_path) ^ " with :keep");
+				(":keep", [], p) :: s.cl_meta
+			end;
+			setkeeper s
+		| _ -> ()
+	in
 	let remove_by_cfname item lst = List.filter (fun i -> item <> i.cf_name) lst in
 	let remove_field cf stat =
 		if stat then begin
@@ -787,15 +848,17 @@ let init_class ctx c p herits fields =
 		| None ->
 			if ctx.com.verbose then print_endline ("Remove method " ^ (s_type_path c.cl_path) ^ "." ^ cf.cf_name);
 			remove_field cf stat
-		| _ -> ()) 
+		| _ -> 
+			setkeeper c;
+			())
 	in
-	let remove_var_if_unreferenced cf stat = (fun () ->	
+	let remove_var_if_unreferenced cf stat = (fun () ->
 		if not (has_meta ":?keep" cf.cf_meta) then begin
 			if ctx.com.verbose then print_endline ("Remove var " ^ (s_type_path c.cl_path) ^ "." ^ cf.cf_name);
 			remove_field cf stat
-		end)
+		end else setkeeper c)
 	in
-	
+
 	(* ----------------------- COMPLETION ----------------------------- *)
 
 	let display_file = if ctx.com.display then String.lowercase (Common.get_full_path p.pfile) = String.lowercase (!Parser.resume_display).pfile else false in
@@ -811,7 +874,7 @@ let init_class ctx c p herits fields =
 			if display_file && (cp.pmin = 0 || (p.pmin <= cp.pmin && p.pmax >= cp.pmax)) then begin
 				if macro && not ctx.in_macro then
 					(* force macro system loading of this class in order to get completion *)
-					(fun() -> ignore(ctx.g.do_macro ctx c.cl_path cf.cf_name [] p))
+					(fun() -> ignore(ctx.g.do_macro ctx MExpr c.cl_path cf.cf_name [] p))
 				else begin
 					cf.cf_type <- TLazy r;
 					(fun() -> ignore((!r)()))
@@ -820,7 +883,9 @@ let init_class ctx c p herits fields =
 				if not (is_full_type cf.cf_type) then cf.cf_type <- TLazy r;
 				(fun() -> ())
 			end
-		end else begin
+		end else if macro && not ctx.in_macro then
+			(fun () -> ())
+		else begin
 			cf.cf_type <- TLazy r;
 			(fun () -> ignore(!r()))
 		end
@@ -833,11 +898,15 @@ let init_class ctx c p herits fields =
 		let p = f.cff_pos in
 		let stat = List.mem AStatic f.cff_access in
 		let inline = List.mem AInline f.cff_access in
+		let ctx = { ctx with curclass = c; tthis = tthis } in
 		match f.cff_kind with
 		| FVar (t,e) ->
-			if not stat && has_field name c.cl_super then error ("Redefinition of variable " ^ name ^ " in subclass is not allowed") p;
+			if not stat && has_field name c.cl_super then display_error ctx ("Redefinition of variable " ^ name ^ " in subclass is not allowed") p;
 			if inline && not stat then error "Inline variable must be static" p;
-			if inline && e = None then error "Inline variable must be initialized" p;
+			(match e with
+			| None when inline -> error "Inline variable must be initialized" p
+			| Some (_,p) when not stat -> display_error ctx "Member variable initialization is not allowed outside of class constructor" p
+			| _ -> ());
 			let t = (match t with
 				| None ->
 					if not stat then display_error ctx ("Type required for member variable " ^ name) p;
@@ -854,6 +923,7 @@ let init_class ctx c p herits fields =
 				cf_doc = f.cff_doc;
 				cf_meta = f.cff_meta;
 				cf_type = t;
+				cf_pos = f.cff_pos;
 				cf_kind = Var (if inline then { v_read = AccInline ; v_write = AccNever } else { v_read = AccNormal; v_write = AccNormal });
 				cf_expr = None;
 				cf_public = is_public f.cff_access None;
@@ -875,12 +945,12 @@ let init_class ctx c p herits fields =
 							ignore(!r())
 					)
 				| Some e ->
-					let ctx = { ctx with curclass = c; tthis = tthis } in
 					let r = exc_protect (fun r ->
 						r := (fun() -> t);
 						if ctx.com.verbose then print_endline ("Typing " ^ s_type_path c.cl_path ^ "." ^ name);
 						cf.cf_meta <- if has_meta ":?keep" cf.cf_meta then f.cff_meta else (":?keep", [], p) :: f.cff_meta;
 						cf.cf_expr <- Some (type_static_var ctx t e p);
+						cf.cf_type <- t;
 						t
 					) in
 					cf.cf_type <- TLazy r;
@@ -894,54 +964,65 @@ let init_class ctx c p herits fields =
 			end else (match e with
 				| None -> (fun() -> ())
 				| Some e ->
-					let ctx = { ctx with curclass = c; tthis = tthis } in
 					let r = exc_protect (fun r ->
 						r := (fun() -> t);
 						if ctx.com.verbose then print_endline ("Typing " ^ s_type_path c.cl_path ^ "." ^ name);
 						cf.cf_expr <- Some (type_static_var ctx t e p);
+						cf.cf_type <- t;
 						t
 					) in
 					bind_type cf r (snd e) false
 			) in
 			f, false, cf, delay
-		| FFun (fparams,fd) ->
+		| FFun fd ->
 			let params = ref [] in
 			params := List.map (fun (n,flags) ->
 				match flags with
 				| [] ->
 					type_type_params ctx ([],name) (fun() -> !params) p (n,[])
 				| _ -> error "This notation is not allowed because it can't be checked" p
-			) fparams;
+			) fd.f_params;
 			let params = !params in
 			if inline && c.cl_interface then error "You can't declare inline methods in interfaces" p;
 			let is_macro = (is_macro && stat) || has_meta ":macro" f.cff_meta in
-			if is_macro && not stat then error "Only static methods can be macros" p;
+			let f, stat, fd = if not is_macro || stat then
+				f, stat, fd
+			else if ctx.in_macro then
+				(* non-static macros methods are turned into static when we are running the macro *)
+				{ f with cff_access = AStatic :: f.cff_access }, true, fd
+			else
+				(* remove display of first argument which will contain the "this" expression *)
+				f, stat, { fd with f_args = match fd.f_args with [] -> [] | _ :: l -> l }
+			in
 			let fd = if not is_macro then
 				fd
 			else if ctx.in_macro then
 				let texpr = CTPath { tpackage = ["haxe";"macro"]; tname = "Expr"; tparams = []; tsub = None } in
 				{
+					f_params = fd.f_params;
 					f_type = (match fd.f_type with None -> Some texpr | t -> t);
 					f_args = List.map (fun (a,o,t,e) -> a,o,(match t with None -> Some texpr | _ -> t),e) fd.f_args;
 					f_expr = fd.f_expr;
 				}
 			else
 				let tdyn = Some (CTPath { tpackage = []; tname = "Dynamic"; tparams = []; tsub = None }) in
+				let to_dyn = function
+					| { tpackage = ["haxe";"macro"]; tname = "Expr"; tsub = Some "ExprRequire"; tparams = [TPType t] } -> Some t
+					| { tpackage = []; tname = "ExprRequire"; tsub = None; tparams = [TPType t] } -> Some t
+					| _ -> tdyn
+				in
 				{
-					f_type = tdyn;
-					f_args = List.map (fun (a,o,_,_) -> a,o,tdyn,None) fd.f_args;
-					f_expr = (EBlock [],p)
+					f_params = fd.f_params;
+					f_type = (match fd.f_type with Some (CTPath t) -> to_dyn t | _ -> tdyn);
+					f_args = List.map (fun (a,o,t,_) -> a,o,(match t with Some (CTPath t) -> to_dyn t | _ -> tdyn),None) fd.f_args;
+					f_expr = None;
 				}
 			in
 			let parent = (if not stat then get_parent c name else None) in
 			let dynamic = List.mem ADynamic f.cff_access || (match parent with Some { cf_kind = Method MethDynamic } -> true | _ -> false) in
 			if inline && dynamic then error "You can't have both 'inline' and 'dynamic'" p;
-			let ctx = { ctx with
-				curclass = c;
-				curmethod = name;
-				tthis = tthis;
-				type_params = if stat then params else params @ ctx.type_params;
-			} in
+			ctx.curmethod <- name;
+			ctx.type_params <- if stat then params else params @ ctx.type_params;
 			let ret = type_opt ctx p fd.f_type in
 			let args = List.map (fun (name,opt,t,c) ->
 				let t, c = type_function_param ctx (type_opt ctx p t) c opt p in
@@ -949,8 +1030,9 @@ let init_class ctx c p herits fields =
 			) fd.f_args in
 			let t = TFun (fun_args args,ret) in
 			let constr = (name = "new") in
+			if constr then Hashtbl.add ctx.g.constructs c.cl_path (f.cff_access,fd);
 			if constr && c.cl_interface then error "An interface cannot have a constructor" p;
-			if c.cl_interface && not stat && (match fd.f_expr with EBlock [] , _ -> false | _ -> true) then error "An interface method cannot have a body" p;
+			if c.cl_interface && not stat && fd.f_expr <> None then error "An interface method cannot have a body" p;
 			if constr then (match fd.f_type with
 				| None | Some (CTPath { tpackage = []; tname = "Void" }) -> ()
 				| _ -> error "A class constructor can't have a return value" p
@@ -960,6 +1042,7 @@ let init_class ctx c p herits fields =
 				cf_doc = f.cff_doc;
 				cf_meta = f.cff_meta;
 				cf_type = t;
+				cf_pos = f.cff_pos;
 				cf_kind = Method (if is_macro then MethMacro else if inline then MethInline else if dynamic then MethDynamic else MethNormal);
 				cf_expr = None;
 				cf_public = is_public f.cff_access parent;
@@ -968,7 +1051,7 @@ let init_class ctx c p herits fields =
 			let r = exc_protect (fun r ->
 				r := (fun() -> t);
 				if ctx.com.verbose then print_endline ("Typing " ^ s_type_path c.cl_path ^ "." ^ name);
-				let e , fargs = type_function ctx args ret stat constr fd p in
+				let e , fargs = type_function ctx args ret (if constr then FConstructor else if stat then FStatic else FMember) fd p in
 				let f = {
 					tf_args = fargs;
 					tf_type = ret;
@@ -979,14 +1062,17 @@ let init_class ctx c p herits fields =
 					| TBlock [] | TBlock [{ eexpr = TConst _ }] | TConst _ | TObjectDecl [] -> ()
 					| _ -> c.cl_init <- Some e);
 				cf.cf_expr <- Some (mk (TFunction f) t p);
+				cf.cf_type <- t;
 				t
 			) in
 			let delay = if (ctx.com.dead_code_elimination && not ctx.com.display) then begin
-				if ((c.cl_extern && not inline) || c.cl_interface) && cf.cf_name <> "__init__" then begin
+				if ((c.cl_extern && not inline) || c.cl_interface) && cf.cf_name <> "__init__" then
 					(fun() -> ())
-				end else begin
+				else if is_macro && not ctx.in_macro then 
+					(fun () -> ())
+				else begin
 					cf.cf_type <- TLazy r;
-					(fun() -> 
+					(fun() ->
 						if not (keep f stat) then begin
 							delay ctx (remove_method_if_unreferenced cf stat)
 						end else
@@ -996,10 +1082,13 @@ let init_class ctx c p herits fields =
 			end else if ((c.cl_extern && not inline) || c.cl_interface) && cf.cf_name <> "__init__" then
 				(fun() -> ())
 			else
-				bind_type cf r (snd fd.f_expr) is_macro
+				bind_type cf r (match fd.f_expr with Some e -> snd e | None -> f.cff_pos) is_macro
 			in
 			f, constr, cf, delay
-		| FProp (get,set,t) ->
+		| FProp (get,set,t,eo) ->
+			(match eo with
+			| None -> ()
+			| Some e -> error "Property initialization is not allowed" (snd e));
 			let ret = load_complex_type ctx p t in
 			let check_get = ref (fun() -> ()) in
 			let check_set = ref (fun() -> ()) in
@@ -1040,6 +1129,7 @@ let init_class ctx c p herits fields =
 				cf_name = name;
 				cf_doc = f.cff_doc;
 				cf_meta = f.cff_meta;
+				cf_pos = f.cff_pos;
 				cf_kind = Var { v_read = get; v_write = set };
 				cf_expr = None;
 				cf_type = ret;
@@ -1060,7 +1150,7 @@ let init_class ctx c p herits fields =
 						loop l
 				| _ -> error "Invalid require identifier" p
 			in
-			loop conds			
+			loop conds
 		| _ :: l ->
 			check_require l
 	in
@@ -1079,8 +1169,8 @@ let init_class ctx c p herits fields =
 			if c.cl_constructor <> None then error "Duplicate constructor" p;
 			c.cl_constructor <- Some f;
 		end else if not is_static || f.cf_name <> "__init__" then begin
-			if PMap.mem f.cf_name (if is_static then c.cl_statics else c.cl_fields) then error ("Duplicate class field declaration : " ^ f.cf_name) p;
-			if PMap.exists f.cf_name (if is_static then c.cl_fields else c.cl_statics) then error ("Same field name can't be use for both static and instance : " ^ f.cf_name) p;
+			if PMap.mem f.cf_name (if is_static then c.cl_statics else c.cl_fields) then display_error ctx ("Duplicate class field declaration : " ^ f.cf_name) p;
+			if PMap.exists f.cf_name (if is_static then c.cl_fields else c.cl_statics) then display_error ctx ("Same field name can't be use for both static and instance : " ^ f.cf_name) p;
 			if is_static then begin
 				c.cl_statics <- PMap.add f.cf_name f c.cl_statics;
 				c.cl_ordered_statics <- f :: c.cl_ordered_statics;
@@ -1098,6 +1188,9 @@ let init_class ctx c p herits fields =
 		define a default inherited constructor.
 		This is actually pretty tricky since we can't assume that the constructor of the
 		superclass has been defined yet because type structure is not stabilized wrt recursion.
+
+		Generating a constructor after typing could be possible but is quite hard because we don't have the
+		default values for arguments in the function type
 	*)
 	let rec define_constructor ctx c =
 		try
@@ -1108,11 +1201,11 @@ let init_class ctx c p herits fields =
 			| Some (csuper,_) ->
 				match define_constructor ctx csuper with
 				| None -> None
-				| Some (acc,pl,f) as infos ->
+				| Some (acc,f) as infos ->
 					let p = c.cl_pos in
 					let esuper = (ECall ((EConst (Ident "super"),p),List.map (fun (n,_,_,_) -> (EConst (Ident n),p)) f.f_args),p) in
 					let acc = (if csuper.cl_extern && acc = [] then [APublic] else acc) in
-					let fnew = { f with f_expr = esuper; f_args = List.map (fun (a,opt,t,def) ->
+					let fnew = { f with f_expr = Some esuper; f_args = List.map (fun (a,opt,t,def) ->
 						(*
 							we are removing the type and letting the type inference
 							work because the current package is not the same as the superclass one
@@ -1126,19 +1219,24 @@ let init_class ctx c p herits fields =
 							| CTPath t -> is_qual_name t
 							| CTParent t -> is_qualified t
 							| CTFunction (tl,t) -> List.for_all is_qualified tl && is_qualified t
-							| CTAnonymous fl -> List.for_all (fun (_,_,f,_) -> is_qual_field f) fl
-							| CTExtend (t,fl) -> is_qual_name t && List.for_all (fun (_,_,f,_) -> is_qual_field f) fl
-						and is_qual_field = function
-							| AFVar t -> is_qualified t
-							| AFProp (t,_,_) -> is_qualified t
-							| AFFun (pl,t) -> List.for_all (fun (_,_,t) -> is_qualified t) pl && is_qualified t
+							| CTAnonymous fl -> List.for_all is_qual_field fl
+							| CTExtend (t,fl) -> is_qual_name t && List.for_all is_qual_field fl
+							| CTOptional t -> is_qualified t
+						and is_qual_field f =
+							match f.cff_kind with
+							| FVar (t,_) -> is_qual_opt t
+							| FProp (_,_,t,_) -> is_qualified t
+							| FFun f -> List.for_all (fun (_,_,t,_) -> is_qual_opt t) f.f_args && is_qual_opt f.f_type
+						and is_qual_opt = function
+							| None -> true
+							| Some t -> is_qualified t
 						and is_qual_name t =
 							match t.tpackage with
 							| [] -> t.tname = "Dynamic" && List.for_all is_qual_param t.tparams
 							| _ :: _ -> true
 						and is_qual_param = function
 							| TPType t -> is_qualified t
-							| TPConst _ -> false (* prevent multiple incompatible types *)
+							| TPExpr _ -> false (* prevent multiple incompatible types *)
 						in
 						let t = (match t with
 							| Some t when is_qualified t -> Some t
@@ -1146,9 +1244,9 @@ let init_class ctx c p herits fields =
 						) in
 						a,opt,t,def
 					) f.f_args } in
-					let _, _, cf, delayed = loop_cf { cff_name = "new"; cff_pos = p; cff_doc = None; cff_meta = []; cff_access = acc; cff_kind = FFun (pl,fnew) } in
+					let _, _, cf, delayed = loop_cf { cff_name = "new"; cff_pos = p; cff_doc = None; cff_meta = []; cff_access = acc; cff_kind = FFun fnew } in
 					c.cl_constructor <- Some cf;
-					Hashtbl.add ctx.g.constructs c.cl_path (acc,pl,f);
+					Hashtbl.add ctx.g.constructs c.cl_path (acc,f);
 					delay ctx delayed;
 					infos
 	in
@@ -1189,13 +1287,14 @@ let type_module ctx m tdecls loadp =
 			let priv = List.mem HPrivate d.d_flags in
 			let path = decl_with_name d.d_name p priv in
 			let c = mk_class path p in
+			c.cl_module <- m;
 			c.cl_private <- priv;
 			c.cl_doc <- d.d_doc;
 			c.cl_meta <- d.d_meta;
 			(* store the constructor for later usage *)
 			List.iter (fun cf ->
 				match cf with
-				| { cff_name = "new"; cff_kind = FFun (pl,f) } -> Hashtbl.add ctx.g.constructs path (cf.cff_access,pl,f)
+				| { cff_name = "new"; cff_kind = FFun f } -> Hashtbl.add ctx.g.constructs path (cf.cff_access,f)
 				| _ -> ()
 			) d.d_data;
 			decls := TClassDecl c :: !decls
@@ -1204,6 +1303,7 @@ let type_module ctx m tdecls loadp =
 			let path = decl_with_name d.d_name p priv in
 			let e = {
 				e_path = path;
+				e_module = m;
 				e_pos = p;
 				e_doc = d.d_doc;
 				e_meta = d.d_meta;
@@ -1219,6 +1319,7 @@ let type_module ctx m tdecls loadp =
 			let path = decl_with_name d.d_name p priv in
 			let t = {
 				t_path = path;
+				t_module = m;
 				t_pos = p;
 				t_doc = d.d_doc;
 				t_private = priv;
@@ -1243,21 +1344,19 @@ let type_module ctx m tdecls loadp =
 		ret = ctx.ret;
 		current = m;
 		locals = PMap.empty;
-		locals_map = PMap.empty;
-		locals_map_inv = PMap.empty;
 		local_types = ctx.g.std.mtypes @ m.mtypes;
 		local_using = [];
 		type_params = [];
 		curmethod = "";
+		curfun = FStatic;
 		untyped = false;
 		in_super_call = false;
-		in_constructor = false;
-		in_static = false;
 		in_macro = ctx.in_macro;
 		in_display = false;
 		in_loop = false;
 		opened = [];
 		param_type = None;
+		vthis = None;
 	} in
 	let delays = ref [] in
 	let get_class name =
@@ -1293,7 +1392,7 @@ let type_module ctx m tdecls loadp =
 			(match t.tsub with
 			| None ->
 				let md = ctx.g.do_load_module ctx (t.tpackage,t.tname) p in
-				let types = List.filter (fun t -> not (t_private t)) md.mtypes in
+				let types = List.filter (fun t -> not (t_infos t).mt_private) md.mtypes in
 				ctx.local_types <- ctx.local_types @ types
 			| Some _ ->
 				let t = load_type_def ctx p t in
@@ -1303,7 +1402,7 @@ let type_module ctx m tdecls loadp =
 			(match t.tsub with
 			| None ->
 				let md = ctx.g.do_load_module ctx (t.tpackage,t.tname) p in
-				let types = List.filter (fun t -> not (t_private t)) md.mtypes in
+				let types = List.filter (fun t -> not (t_infos t).mt_private) md.mtypes in
 				ctx.local_using <- ctx.local_using @ (List.map (resolve_typedef ctx) types);
 			| Some _ ->
 				let t = load_type_def ctx p t in
@@ -1315,20 +1414,36 @@ let type_module ctx m tdecls loadp =
 		| EEnum d ->
 			let e = get_enum d.d_name in
 			let ctx = { ctx with type_params = e.e_types } in
+			let constructs = ref d.d_data in
+			let get_constructs() =
+				List.map (fun (c,doc,meta,pl,p) ->
+					{
+						cff_name = c;
+						cff_doc = doc;
+						cff_meta = meta;
+						cff_pos = p;
+						cff_access = [];
+						cff_kind = (match pl with
+							| [] -> FVar (None,None)
+							| _ -> FFun { f_params = []; f_type = None; f_expr = None; f_args = List.map (fun (n,o,t) -> n,o,Some t,None) pl });
+					}
+				) (!constructs)
+			in
+			build_module_def ctx (TEnumDecl e) e.e_meta get_constructs (fun (e,p) ->
+				match e with
+				| EVars [_,Some (CTAnonymous fields),None] ->
+					constructs := List.map (fun f ->
+						(f.cff_name,f.cff_doc,f.cff_meta,(match f.cff_kind with
+						| FVar (None,None) -> []
+						| FFun { f_params = []; f_type = None; f_expr = (None|Some (EBlock [],_)); f_args = pl } -> List.map (fun (n,o,t,_) -> match t with None -> error "Missing function parameter type" f.cff_pos | Some t -> n,o,t) pl
+						| _ -> error "Invalid enum constructor in @:build result" p
+						),f.cff_pos)
+					) fields
+				| _ -> error "Enum build macro must return a single variable with anonymous object fields" p
+			);
 			let et = TEnum (e,List.map snd e.e_types) in
 			let names = ref [] in
 			let index = ref 0 in
-			let extra = build_module_def ctx e.e_meta (fun (e,p) ->
-				match e with
-				| EArrayDecl el | EBlock el ->
-					List.map (fun (e,p) ->
-						match e with
-						| EConst (Ident i) | EConst (Type i) | EConst (String i) -> i, None, [], [], p
-						| EFunction (Some name,f) -> name, None, [], (List.map (fun (n,o,t,_) -> n,o,(match t with None -> error "Missing function parameter type" p | Some t -> t)) f.f_args), p
-						| _ -> error "Enum build expression should be a single identifier or a named function" p
-					) el
-				| _ -> error "Enum build macro must return an block" p
-			) in
 			List.iter (fun (c,doc,meta,t,p) ->
 				if c = "name" && Common.defined ctx.com "js" then error "This identifier cannot be used in Javascript" p;
 				let t = (match t with
@@ -1352,7 +1467,7 @@ let type_module ctx m tdecls loadp =
 				} e.e_constrs;
 				incr index;
 				names := c :: !names;
-			) (d.d_data @ extra);
+			) (!constructs);
 			e.e_names <- List.rev !names;
 			e.e_extern <- e.e_extern || e.e_names = [];
 		| ETypedef d ->
@@ -1368,7 +1483,7 @@ let type_module ctx m tdecls loadp =
 			| _ -> assert false);
 	) tdecls;
 	(* PASS 3 : type checking, delayed until all modules and types are built *)
-	List.iter (delay ctx) (List.rev (!delays));	
+	List.iter (delay ctx) (List.rev (!delays));
 	m
 
 let parse_module ctx m p =
@@ -1386,19 +1501,13 @@ let parse_module ctx m p =
 			String.concat "/" (x :: l) ^ "/" ^ name
 	) ^ ".hx" in
 	let file = Common.find_file ctx.com file in
-	let ch = (try open_in_bin file with _ -> error ("Could not open " ^ file) p) in
-	let t = Common.timer "parsing" in
-	Lexer.init file;
-	let pack , decls = (try Parser.parse ctx.com (Lexing.from_channel ch) with e -> close_in ch; t(); raise e) in
-	t();
-	close_in ch;
-	if ctx.com.verbose then print_endline ("Parsed " ^ file);
+	let pack, decls = (!parse_hook) ctx.com file p in
 	if pack <> !remap then begin
 		let spack m = if m = [] then "<empty>" else String.concat "." m in
 		if p == Ast.null_pos then
-			error ("Invalid commandline class : " ^ s_type_path m ^ " should be " ^ s_type_path (pack,snd m)) p
+			display_error ctx ("Invalid commandline class : " ^ s_type_path m ^ " should be " ^ s_type_path (pack,snd m)) p
 		else
-			error ("Invalid package : " ^ spack (fst m) ^ " should be " ^ spack pack) p
+			display_error ctx ("Invalid package : " ^ spack (fst m) ^ " should be " ^ spack pack) p
 	end;
 	if !remap <> fst m then
 		(* build typedefs to redirect to real package *)
@@ -1440,7 +1549,8 @@ let load_module ctx m p =
 				parse_module ctx m p
 			with Not_found ->
 				let rec loop = function
-					| [] -> raise (Error (Module_not_found m,p))
+					| [] -> 
+						raise (Error (Module_not_found m,p))
 					| load :: l ->
 						match load m p with
 						| None -> loop l

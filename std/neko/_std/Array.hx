@@ -60,11 +60,11 @@
 			a : this,
 			p : 0,
 			hasNext : function() {
-				return this.p < this.a.length;
+				return __this__.p < __this__.a.length;
 			},
 			next : function() {
-				var i = this.a.__a[this.p];
-				this.p += 1;
+				var i = __this__.a.__a[__this__.p];
+				__this__.p += 1;
 				return i;
 			}
 		};
@@ -247,7 +247,7 @@
 		return this.__a[pos];
 	}
 
-	private function __set( pos : Int, v : T ) : Void {
+	private function __set( pos : Int, v : T ) : T {
 		var a = this.__a;
 		if( this.length <= pos ) {
 			var l = pos + 1;
@@ -259,6 +259,7 @@
 			this.length = l;
 		}
 		a[pos] = v;
+		return v;
 	}
 
 	private function __double(l:Int) : Void {

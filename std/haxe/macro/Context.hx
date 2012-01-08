@@ -32,7 +32,7 @@ class Context {
 
 #if neko
 	/**
-		Display a compilation error at the given position in code
+		Display a compilation error at the given position in code and abort the current macro call
 	**/
 	public static function error( msg : String, pos : Position ) : Dynamic {
 		return load("error",2)(untyped msg.__s, pos);
@@ -74,12 +74,21 @@ class Context {
 		Returns the current class in which the macro is called
 	**/
 	public static function getLocalClass() : Null<Type.Ref<Type.ClassType>> {
-		var l : Type = load("curclass", 0)();
+		var l : Type = load("local_type", 0)();
 		if( l == null ) return null;
 		return switch( l ) {
 		case TInst(c,_): c;
 		default: null;
 		}
+	}
+
+	/**
+		Returns the current type in/on which the macro is called
+	**/
+	public static function getLocalType() : Null<Type> {
+		var l : Type = load("local_type", 0)();
+		if( l == null ) return null;
+		return l;
 	}
 
 	/**
@@ -111,6 +120,13 @@ class Context {
 	}
 
 	/**
+		Build an expression corresponding to the given runtime value. Only basic types + enums are supported.
+	**/
+	public static function makeExpr( v : Dynamic, pos : Position ) : Expr {
+		return load("make_expr", 2)(v, pos);
+	}
+
+	/**
 		Quickly build an hashed MD5 signature for any given value
 	**/
 	public static function signature( v : Dynamic ) : String {
@@ -129,6 +145,13 @@ class Context {
 	**/
 	public static function typeof( e : Expr ) : Type {
 		return load("typeof", 1)(e);
+	}
+
+	/**
+		Follow all typedefs to reach the actual real type
+	**/
+	public static function follow( t : Type, ?once : Bool ) : Type {
+		return load("follow", 2)(t,once);
 	}
 
 	/**
@@ -151,7 +174,21 @@ class Context {
 		Add or modify a resource that will be accessible with haxe.Resource api.
 	**/
 	public static function addResource( name : String, data : haxe.io.Bytes ) {
-		return load("add_resource",2)(untyped name.__s,data.getData());
+		load("add_resource",2)(untyped name.__s,data.getData());
+	}
+
+	/**
+		Returns the list of fields for the current type inside the build macro.
+	**/
+	public static function getBuildFields() : Array<Field> {
+		return load("build_fields", 0)();
+	}
+
+	/**
+		Define a new type based on the given definition.
+	**/
+	public static function defineType( t : TypeDefinition ) : Void {
+		load("define_type", 1)(t);
 	}
 
 	static function load( f, nargs ) : Dynamic {

@@ -54,14 +54,13 @@ class Http {
 	public var noShutdown : Bool;
 	public var cnxTimeout : Float;
 	public var responseHeaders : Hash<String>;
-	var postData : String;
 	var chunk_size : Null<Int>;
 	var chunk_buf : haxe.io.Bytes;
 	var file : { param : String, filename : String, io : haxe.io.Input, size : Int };
 #elseif js
 	public var async : Bool;
-	var postData : String;
 #end
+	var postData : String;
 	var headers : Hash<String>;
 	var params : Hash<String>;
 
@@ -95,11 +94,12 @@ class Http {
 		params.set(param,value);
 	}
 
-	#if (neko || js || cpp)
 	public function setPostData( data : String ) {
+		#if (flash && !flash9)
+		throw "Not available";
+		#end
 		postData = data;
 	}
-	#end
 
 	public function request( post : Bool ) : Void {
 		var me = this;
@@ -195,12 +195,16 @@ class Http {
 		var bug = small_url.split("xxx");
 
 		var request = new flash.net.URLRequest( small_url );
-		for( k in headers.keys() ){
+		for( k in headers.keys() )
 			request.requestHeaders.push( new flash.net.URLRequestHeader(k,headers.get(k)) );
-		}
 
-		request.data = vars;
-		request.method = if( post ) "POST" else "GET";
+		if( postData != null ) {
+			request.data = postData;
+			request.method = "POST";
+		} else {
+			request.data = vars;
+			request.method = if( post ) "POST" else "GET";
+		}
 
 		try {
 			loader.load( request );
@@ -269,34 +273,30 @@ class Http {
 	}
 
 	public function customRequest( post : Bool, api : haxe.io.Output, ?sock : AbstractSocket, ?method : String  ) {
-		#if php
 		var url_regexp = ~/^(https?:\/\/)?([a-zA-Z\.0-9-]+)(:[0-9]+)?(.*)$/;
-		#else
-		var url_regexp = ~/^(http:\/\/)?([a-zA-Z\.0-9-]+)(:[0-9]+)?(.*)$/;
-		#end
 		if( !url_regexp.match(url) ) {
 			onError("Invalid URL");
 			return;
 		}
-		#if php
 		var secure = (url_regexp.matched(1) == "https://");
-		#end
-		if ( sock == null )
-			#if php
-			sock = (secure) ? Socket.newSslSocket() : new Socket();
-			#else
-			sock = new Socket();
-			#end
+		if( sock == null ) {
+			if( secure ) {
+				#if php
+				sock = Socket.newSslSocket();
+				#elseif hxssl
+				sock = new neko.tls.Socket();
+				#else
+				throw "Https is only supported with -lib hxssl";
+				#end
+			} else
+				sock = new Socket();
+		}
 		var host = url_regexp.matched(2);
 		var portString = url_regexp.matched(3);
 		var request = url_regexp.matched(4);
 		if( request == "" )
 			request = "/";
-		#if php
-		var port = if( portString == null || portString == "" ) ((!secure) ? 80 : 443) else Std.parseInt(portString.substr(1,portString.length-1));
-		#else
-		var port = if ( portString == null || portString == "" ) 80 else Std.parseInt(portString.substr(1, portString.length - 1));
-		#end
+		var port = if ( portString == null || portString == "" ) secure ? 443 : 80 else Std.parseInt(portString.substr(1, portString.length - 1));
 		var data;
 
 		var multipart = (file != null);

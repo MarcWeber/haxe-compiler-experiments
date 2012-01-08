@@ -24,6 +24,7 @@ extern class Event {
 	static var CLOSE : String;
 	static var COMPLETE : String;
 	static var CONNECT : String;
+	@:require(flash11) static var CONTEXT3D_CREATE : String;
 	@:require(flash10) static var COPY : String;
 	@:require(flash10) static var CUT : String;
 	static var DEACTIVATE : String;
@@ -47,5 +48,6 @@ extern class Event {
 	static var TAB_CHILDREN_CHANGE : String;
 	static var TAB_ENABLED_CHANGE : String;
 	static var TAB_INDEX_CHANGE : String;
+	@:require(flash11) static var TEXT_INTERACTION_MODE_CHANGE : String;
 	static var UNLOAD : String;
 }

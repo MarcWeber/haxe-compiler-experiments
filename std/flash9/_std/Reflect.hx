@@ -29,14 +29,23 @@
 		return o.hasOwnProperty( field );
 	}
 
-	public inline static function field( o : Dynamic, field : String ) : Dynamic untyped {
-		return (o == null) ? null : o[field];
+	public static function field( o : Dynamic, field : String ) : Dynamic untyped {
+		// sealed classes will throw an exception
+		return try o[field] catch( e : Dynamic ) null;
 	}
 
 	public inline static function setField( o : Dynamic, field : String, value : Dynamic ) : Void untyped {
 		o[field] = value;
 	}
 
+	public static inline function getProperty( o : Dynamic, field : String ) : Dynamic {
+		return Reflect.field(o,field);
+	}
+
+	public static inline function setProperty( o : Dynamic, field : String, value : Dynamic ) : Void {
+		setField(o,field,value);
+	}
+	
 	public inline static function callMethod( o : Dynamic, func : Dynamic, args : Array<Dynamic> ) : Dynamic untyped {
 		return func.apply(o,args);
 	}

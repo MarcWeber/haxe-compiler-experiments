@@ -172,7 +172,7 @@ enum ValueType {
 	}
 
 	public static function createEnumIndex<T>( e : Enum<T>, index : Int, ?params : Array<Dynamic> ) : T {
-		var c = Type.getEnumConstructs(e)[index];
+		var c : String = (untyped e.__constructs__)[index];
 		if( c == null ) throw index+" is not a valid enum constructor index";
 		return createEnum(e,c,params);
 	}
@@ -205,8 +205,9 @@ enum ValueType {
 		return a;
 	}
 
-	public static function getEnumConstructs( e : Enum<Dynamic> ) : Array<String> untyped {
-		return untyped e.__constructs__;
+	public static function getEnumConstructs( e : Enum<Dynamic> ) : Array<String> {
+		var a : Array<String> = untyped e.__constructs__;
+		return a.copy();
 	}
 
 	public static function typeof( v : Dynamic ) : ValueType untyped {
@@ -268,6 +269,17 @@ enum ValueType {
 
 	public inline static function enumIndex( e : Dynamic ) : Int {
 		return e.index;
+	}
+
+	public static function allEnums<T>( e : Enum<T> ) : Array<T> {
+		var all = [];
+		var cst : Array<String> = untyped e.__constructs__;
+		for( c in cst ) {
+			var v = Reflect.field(e,c);
+			if( !Reflect.isFunction(v) )
+				all.push(v);
+		}
+		return all;
 	}
 
 }

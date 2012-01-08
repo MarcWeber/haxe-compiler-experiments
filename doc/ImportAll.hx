@@ -27,7 +27,10 @@ import haxe.macro.Context;
 class ImportAll {
 
 	public static function run( ?pack ) {
-		if( pack == null ) pack = "";
+		if( pack == null ) {
+			pack = "";
+			haxe.macro.Compiler.define("doc_gen");
+		}
 		switch( pack ) {
 		case "php":
 			if( !Context.defined("php") ) return;
@@ -43,10 +46,17 @@ class ImportAll {
 			if( !Context.defined("flash9") ) return;
 		case "mt","mtwin":
 			return;
+		case "sys":
+			if( !Context.defined("neko") && !Context.defined("php") && !Context.defined("cpp") ) return;
 		case "tools":
 			return;
 		}
 		for( p in Context.getClassPath() ) {
+			if( p == "/" )
+				continue;
+			// skip if we have a classpath to haxe
+			if( pack.length == 0 && neko.FileSystem.exists(p+"std") )
+				continue;
 			var p = p + pack.split(".").join("/");
 			if( StringTools.endsWith(p,"/") )
 				p = p.substr(0,-1);
@@ -61,8 +71,9 @@ class ImportAll {
 					if( StringTools.startsWith(cl,"flash9.") )
 						cl = "flash."+cl.substr(7);
 					switch( cl ) {
+					case "ImportAll", "neko.db.MacroManager": continue;
 					case "haxe.TimerQueue": if( Context.defined("neko") || Context.defined("php") ) continue;
-					case "haxe.ImportAll": continue;
+					case "haxe.web.Request": if( !(Context.defined("neko") || Context.defined("php") || Context.defined("js")) ) continue;
 					case "haxe.macro.DefaultJSGenerator","haxe.macro.Context", "haxe.macro.Compiler": if( !Context.defined("neko") ) continue;
 					case "haxe.remoting.SocketWrapper": if( !Context.defined("flash") ) continue;
 					case "haxe.remoting.SyncSocketConnection": if( !(Context.defined("neko") || Context.defined("php") || Context.defined("cpp")) ) continue;

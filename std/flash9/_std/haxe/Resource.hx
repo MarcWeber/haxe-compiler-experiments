@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
+ * Copyright (c) 2005-2008, The haXe Project Contributors
  * All rights reserved.
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -22,27 +22,42 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGE.
  */
-package cpp;
+package haxe;
 
-typedef Int32 = CppInt32__;
+class Resource {
 
-extern class CppInt32__ {
-	public static  function make( a : Int, b : Int ) : Int32;
-	public static  function ofInt( x : Int ) : Int32;
-	public static  function toInt( x : Int32 ) : Int;
-	public static  function add( a : Int32, b : Int32 ) : Int32;
-	public static  function sub( a : Int32, b : Int32 ) : Int32;
-	public static  function mul( a : Int32, b : Int32 ) : Int32;
-	public static  function div( a : Int32, b : Int32 ) : Int32;
-	public static  function mod( a : Int32, b : Int32 ) : Int32;
-	public static  function shl( a : Int32, b : Int ) : Int32;
-	public static  function shr( a : Int32, b : Int ) : Int32;
-	public static  function ushr( a : Int32, b : Int ) : Int32;
-	public static  function and( a : Int32, b : Int32 ) : Int32;
-	public static  function or( a : Int32, b : Int32 ) : Int32;
-	public static  function xor( a : Int32, b : Int32 ) : Int32;
-	public static  function neg( a : Int32 ) : Int32;
-	public static  function complement( a : Int32 ) : Int32;
-	public static  function compare( a : Int32, b : Int32 ) : Int;
+	static var content : Array<{ name : String }>;
+
+	public static function listNames() : Array<String> {
+		var names = new Array();
+		for( x in content )
+			names.push(x.name);
+		return names;
+	}
+
+	public static function getString( name : String ) : String {
+		var b = resolve(name);
+		return b == null ? null : b.readUTFBytes(b.length);
+	}
+
+	public static function getBytes( name : String ) : haxe.io.Bytes {
+		var b = resolve(name);
+		return b == null ? null : haxe.io.Bytes.ofData(b);
+	}
+
+	static function resolve( name : String ) : flash.utils.ByteArray {
+		try untyped {
+			var c = __as__(__global__["flash.utils.getDefinitionByName"]("_res._"+name.split(".").join("_")),Class);
+			return __new__(c);
+		} catch( e : Dynamic ) {
+			return null;
+		}
+	}
+
+	static function __init__() {
+		#if !as3
+		content = untyped __resources__();
+		#end
+	}
+
 }
-

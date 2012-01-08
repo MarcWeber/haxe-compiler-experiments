@@ -31,7 +31,6 @@ class Timer {
 	private var id : Null<Int>;
 
 	#if js
-	private static var arr = new Array<Timer>();
 	private var timerId : Int;
 	#end
 
@@ -43,9 +42,10 @@ class Timer {
 			var me = this;
 			id = untyped _global["setInterval"](function() { me.run(); },time_ms);
 		#elseif js
+			var arr : Array<Timer> = untyped haxe_timers;
 			id = arr.length;
 			arr[id] = this;
-			timerId = untyped window.setInterval("haxe.Timer.arr["+id+"].run();",time_ms);
+			timerId = untyped window.setInterval("haxe_timers["+id+"].run();",time_ms);
 		#end
 	}
 
@@ -58,6 +58,7 @@ class Timer {
 			untyped _global["clearInterval"](id);
 		#elseif js
 			untyped window.clearInterval(timerId);
+			var arr = untyped haxe_timers;
 			arr[id] = null;
 			if( id > 100 && id == arr.length - 1 ) {
 				// compact array
@@ -104,10 +105,16 @@ class Timer {
 		#elseif js
 			return Date.now().getTime() / 1000;
 		#elseif cpp
-			return untyped __time_stamp();
+			return untyped __global__.__time_stamp();
 		#else
 			return 0;
 		#end
 	}
 
+	#if js
+	static function __init__() untyped {
+		if( __js__('typeof')(haxe_timers) == 'undefined' ) haxe_timers = [];
+	}
+	#end
+	
 }

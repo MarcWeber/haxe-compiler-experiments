@@ -81,7 +81,7 @@ wclean:
 	ocamlyacc $<
 
 export:
-	cp haxe*.exe $(EXPORT)
+	cp haxe*.exe doc/CHANGES.txt $(EXPORT)
 	rsync -a --exclude .svn --exclude *.n --exclude std/mt --delete std $(EXPORT)
 
 ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx

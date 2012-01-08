@@ -37,6 +37,14 @@
 		untyped __setfield__(o, field, value);
 	}
 
+	public static inline function getProperty( o : Dynamic, field : String ) : Dynamic {
+		return Reflect.field(o,field);
+	}
+
+	public static inline function setProperty( o : Dynamic, field : String, value : Dynamic ) : Void {
+		setField(o,field,value);
+	}
+	
 	public static function callMethod( o : Dynamic, func : Dynamic, args : Array<Dynamic> ) : Dynamic untyped {
 		if (__call__("is_string", o) && !__call__("is_array", func)) {
 			return __call__("call_user_func_array", field(o, func), __field__(args, "»a"));
@@ -74,8 +82,7 @@
 			return false;
 		if(untyped __call__("is_object", v))
 			return untyped __php__("$v instanceof _hx_anonymous") || Type.getClass(v) != null;
-		if(untyped __php__("is_string($v) && !_hx_is_lambda($v)")) return true;
-		return false;
+		return untyped __php__("is_string($v) && !_hx_is_lambda($v)");
 	}
 
 	public static function deleteField( o : Dynamic, f : String ) : Bool {
@@ -85,7 +92,7 @@
 	}
 
 	public static function copy<T>( o : T ) : T {
-		if(untyped __call__("is_string", o)) return o;
+		if (untyped __call__("is_string", o)) return o;
 		var o2 : Dynamic = {};
 		for( f in Reflect.fields(o) )
 			Reflect.setField(o2,f,Reflect.field(o,f));

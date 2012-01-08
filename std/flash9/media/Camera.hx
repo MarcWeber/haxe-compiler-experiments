@@ -13,6 +13,7 @@ package flash.media;
 	var motionTimeout(default,null) : Int;
 	var muted(default,null) : Bool;
 	var name(default,null) : String;
+	@:require(flash11_2) var position(default,null) : String;
 	var quality(default,null) : Int;
 	var width(default,null) : Int;
 	function new() : Void;

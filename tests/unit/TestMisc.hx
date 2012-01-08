@@ -299,4 +299,32 @@ class TestMisc extends Test {
 		eq( e.get(), 7 );
 	}
 
+	function testStringBuf() {
+		var b = new StringBuf();
+		b.add( -45);
+		b.add(1.456);
+		b.add(null);
+		b.add(true);
+		b.add(false);
+		b.add("Hello!");
+		b.addSub("Bla", 1, 2);
+		b.addChar("R".code);
+		eq(b.toString(), "-451.456nulltruefalseHello!laR");
+	}
+	
+	function testToString():Void
+	{
+		var x = { toString : function() return "foo" };
+		eq( Std.string(x), "foo" );
+	}
+	
+	#if !macro
+	function testFormat()
+	{
+		var x = 5;
+		var y = 6;
+		eq(Std.format("$x${x+y}"), "511");
+	}
+	#end
+	
 }

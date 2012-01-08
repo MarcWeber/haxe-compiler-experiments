@@ -136,9 +136,8 @@ let mk lexbuf t =
 	mk_tok t (lexeme_start lexbuf) (lexeme_end lexbuf)
 
 let mk_ident lexbuf =
-	match lexeme lexbuf with
-	| s ->
-		mk lexbuf (try Kwd (Hashtbl.find keywords s) with Not_found -> Const (Ident s))
+	let s = lexeme lexbuf in
+	mk lexbuf (try Kwd (Hashtbl.find keywords s) with Not_found -> Const (Ident s))
 
 let invalid_char lexbuf =
 	error (Invalid_character (lexeme_char lexbuf 0)) (lexeme_start lexbuf)
@@ -250,6 +249,11 @@ and token = parse
 			let v = lexeme lexbuf in
 			let v = String.sub v 1 (String.length v - 1) in
 			mk lexbuf (Macro v)
+		}
+	| '$' ['_' 'a'-'z' 'A'-'Z' '0'-'9']* {
+			let v = lexeme lexbuf in
+			let v = String.sub v 1 (String.length v - 1) in
+			mk lexbuf (Dollar v)
 		}
 	| ident { mk_ident lexbuf }
 	| idtype { mk lexbuf (Const (Type (lexeme lexbuf))) }

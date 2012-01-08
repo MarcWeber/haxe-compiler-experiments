@@ -26,7 +26,7 @@
 @:core_api class Reflect {
 
 	public inline static function hasField( o : Dynamic, field : String ) : Bool untyped {
-		return this["hasOwnProperty"]["call"](o,field);
+		return __this__["hasOwnProperty"]["call"](o,field);
 	}
 
 	public inline static function field( o : Dynamic, field : String ) : Dynamic untyped {
@@ -35,6 +35,14 @@
 
 	public inline static function setField( o : Dynamic, field : String, value : Dynamic ) : Void untyped {
 		o[field] = value;
+	}
+
+	public static inline function getProperty( o : Dynamic, field : String ) : Dynamic {
+		return Reflect.field(o,field);
+	}
+
+	public static inline function setProperty( o : Dynamic, field : String, value : Dynamic ) : Void {
+		setField(o,field,value);
 	}
 
 	public inline static function callMethod( o : Dynamic, func : Dynamic, args : Array<Dynamic> ) : Dynamic untyped {
@@ -63,7 +71,7 @@
 	}
 
 	public static function compareMethods( f1 : Dynamic, f2 : Dynamic ) : Bool {
-		return untyped f1["f"] == f2["f"] && f1["o"] == f2["o"] && f1["f"] != null;
+		return untyped f1 == f2 || (f1["f"] == f2["f"] && f1["o"] == f2["o"] && f1["f"] != null);
 	}
 
 	public static function isObject( v : Dynamic ) : Bool untyped {
@@ -72,7 +80,7 @@
 	}
 
 	public static function deleteField( o : Dynamic, f : String ) : Bool untyped {
-		if( this["hasOwnProperty"]["call"](o,f) != true ) return false;
+		if( __this__["hasOwnProperty"]["call"](o,f) != true ) return false;
 		__delete__(o,f);
 		return true;
 	}

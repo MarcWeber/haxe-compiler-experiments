@@ -114,7 +114,10 @@ let command c =
         if Sys.command c <> 0 then failwith ("Error while running " ^ c);;
 
 let cvs root cmd =
-	command ("cvs -z3 -d" ^ root ^ " " ^ cmd)
+	command ("cvs z-3 -d" ^ root ^ " " ^ cmd)
+
+let svn url target =
+        command ("svn co " ^ url ^ " " ^ target )
 
 let ocamlc file cfg =
 	if !bytecode then command ("ocamlc -c " ^ file);
@@ -161,7 +164,10 @@ let action_fetch_deps(cfg) =
 	cvs motiontwin "co ocaml/extc";
 	cvs motiontwin "co ocaml/extlib-dev";
 	cvs motiontwin "co ocaml/xml-light";
-        cvs motiontwin "co neko/libs/include/ocaml";;
+
+        command ("mkdir -p  " ^ neko );
+        svn "http://nekovm.googlecode.com/svn/trunk/libs/include/ocaml" neko;;
+
 
 let action_build_deps(config) =
         if (not (Sys.file_exists "ocaml/swflib"))

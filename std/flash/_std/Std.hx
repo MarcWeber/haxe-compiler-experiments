@@ -39,14 +39,13 @@
 	}
 
 	public static function parseInt( x : String ) : Null<Int> untyped {
-		var v = _global["parseInt"](x, 10);
-		if( _global["isNaN"](v) ) {
-			if( x.charCodeAt(1) == 'x'.code ) {
-				v = _global["parseInt"](x);
-				if( !_global["isNaN"](v) ) return v; // fast isNaN
-			}
+		var v;
+		if( x.charCodeAt(1) == 'x'.code )
+			v = _global["parseInt"](x);
+		else
+			v = _global["parseInt"](x, 10);
+		if( _global["isNaN"](v) )
 			return null;
-		}
 		return v;
 	}
 
@@ -56,6 +55,10 @@
 
 	public static function random( x : Int ) : Int {
 		return untyped __random__(x);
+	}
+
+	@:macro public static function format( fmt : haxe.macro.Expr.ExprRequire<String> ) : haxe.macro.Expr.ExprRequire<String> {
+		return haxe.macro.Format.format(fmt);
 	}
 
 	static function __init__() : Void untyped {

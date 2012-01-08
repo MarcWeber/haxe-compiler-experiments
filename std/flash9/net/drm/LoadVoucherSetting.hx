@@ -1,7 +1,8 @@
 package flash.net.drm;
 
-@:fakeEnum(String) extern enum LoadVoucherSetting {
-	ALLOW_SERVER;
-	FORCE_REFRESH;
-	LOCAL_ONLY;
+extern class LoadVoucherSetting {
+	function new() : Void;
+	static var ALLOW_SERVER : String;
+	static var FORCE_REFRESH : String;
+	static var LOCAL_ONLY : String;
 }

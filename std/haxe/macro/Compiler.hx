@@ -35,6 +35,10 @@ class Compiler {
 	static var ident = ~/^[A-Za-z_][A-Za-z0-9_]*$/;
 	static var path = ~/^[A-Za-z_][A-Za-z0-9_.]*$/;
 
+	public static function define( flag : String ) {
+		untyped load("define", 1)(flag.__s);
+	}
+	
 	public static function removeField( className : String, field : String, ?isStatic : Bool ) {
 		if( !path.match(className) ) throw "Invalid "+className;
 		if( !ident.match(field) ) throw "Invalid "+field;
@@ -56,19 +60,34 @@ class Compiler {
 	/**
 		Include for compilation all classes defined in the given package excluding the ones referenced in the ignore list.
 	**/
-	public static function include( pack : String, ?rec = true, ?ignore : Array<String> ) {
-		for( p in Context.getClassPath() ) {
-			var p = p + pack.split(".").join("/");
-			if( !neko.FileSystem.exists(p) || !neko.FileSystem.isDirectory(p) )
+	public static function include( pack : String, ?rec = true, ?ignore : Array<String>, ?classPaths : Array<String> ) {
+		var skip = if(null == ignore) {
+			function(c) return false;
+		} else {
+			function(c) return Lambda.has(ignore, c);
+		}
+		if(null == classPaths)
+			classPaths = Context.getClassPath();
+		// normalize class path
+		for( i in 0...classPaths.length ) {
+			var cp = StringTools.replace(classPaths[i], "\\", "/");
+			if(StringTools.endsWith(cp, "/"))
+				cp = cp.substr(0, -1);
+			classPaths[i] = cp;
+		}
+		var prefix = pack == '' ? '' : pack + '.';
+		for( cp in classPaths ) {
+			var path = pack == '' ? cp : cp + "/" + pack.split(".").join("/");
+			if( !neko.FileSystem.exists(path) || !neko.FileSystem.isDirectory(path) )
 				continue;
-			for( file in neko.FileSystem.readDirectory(p) ) {
+			for( file in neko.FileSystem.readDirectory(path) ) {
 				if( StringTools.endsWith(file, ".hx") ) {
-					var cl = pack + "." + file.substr(0, file.length - 3);
-					if( ignore != null && Lambda.has(ignore, cl) )
+					var cl = prefix + file.substr(0, file.length - 3);
+					if( skip(cl) )
 						continue;
 					Context.getModule(cl);
-				} else if( rec && neko.FileSystem.isDirectory(p + "/" + file) )
-					include(pack + "." + file, true, ignore);
+				} else if( rec && neko.FileSystem.isDirectory(path + "/" + file) && !skip(prefix + file) )
+					include(prefix + file, true, ignore, classPaths);
 			}
 		}
 	}
@@ -154,6 +173,10 @@ class Compiler {
 					addMetadata(meta,p.join("."),field,isStatic);
 					continue;
 				}
+				if( StringTools.startsWith(r, "enum ") ) {
+					define("fakeEnum:" + r.substr(5));
+					continue;
+				}
 				var rp = r.split(" : ");
 				if( rp.length > 1 ) {
 					r = rp.shift();
@@ -203,15 +226,10 @@ class Compiler {
 							keep(path + "." + file, true);
 					}
 				} else {
-					try
-					{
-						// if it's not a loaded type or a type at all just continue the loop
-						Context.getType(path);
-						addMetadata("@:keep", path);
-						break;
-					} catch(e : Dynamic){}
+					addMetadata("@:keep", path);
+					break;
 				}
-			}			
+			}
 		}
 	}
 
