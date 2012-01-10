@@ -269,10 +269,14 @@ let actions = [
     action= (fun(cfg) -> 
       command(" ocamake -o bin/haxe -mak -opt -pp camlp4o " ^ path_str ^ " " ^ modules mlist ".ml");
       let append =
-          "ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx\n"
+          "export:\n"
+        ^ "-	cp haxe*.exe doc/CHANGES.txt $(EXPORT)\n"
+        ^ "-	rsync -a --exclude .svn --exclude *.n --exclude std/mt --delete std $(EXPORT)\n"
+        ^ "\n"
+        ^ "ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx\n"
         ^ "ocaml_swf_lib = ocaml/swflib/swf.cmx  ocaml/swflib/actionScript.cmx ocaml/swflib/as3code.cmx ocaml/swflib/as3parse.cmx ocaml/swflib/as3hlparse.cmx ocaml/swflib/swfParser.cmx \n"
         ^ "LIBS := $(LIBS) ocaml/extc/extc.cmxa unix.cmxa str.cmxa ./ocaml/extLib.cmxa ocaml/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) \n"
-        ^ "LFLAGS := -shared $(LFLAGS)\n"
+        ^ "LFLAGS := " ^ (match os_type with "Win32" -> " -shared " | _ -> "") ^ "  $(LFLAGS)\n"
       in
         let chan = open_out_gen [Open_append] 0 "Makefile" in
         output_string chan append;
