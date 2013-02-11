@@ -1,3 +1,24 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 package tools.haxedoc;
 import haxe.rtti.CType;
 
@@ -6,12 +27,12 @@ class HtmlPrinter {
 	static function loadTemplate() {
 		var hdata = try
 			// load in current local/web directory
-			neko.io.File.getContent(neko.Web.getCwd()+"template.xml")
+			sys.io.File.getContent(neko.Web.getCwd()+"template.xml")
 		catch( e : Dynamic ) try {
 			// load in haxe subdirectory (TODO : make it work on linux/osx)
-			var p = ~/[\/\\]/g.split(neko.Sys.executablePath());
+			var p = ~/[\/\\]/g.split(Sys.executablePath());
 			p.pop();
-			neko.io.File.getContent(p.join("/")+"/std/tools/template.xml");
+			sys.io.File.getContent(p.join("/")+"/std/tools/template.xml");
 		} catch( e : Dynamic )
 			default_template;
 		return Xml.parse(hdata);
@@ -114,7 +135,7 @@ class HtmlPrinter {
 	}
 
 	function fmtpath(path : String) {
-		if( path.substr(0,7) == "flash9." )
+		if( path.substr(0,7) == "flash8." )
 			return "flash."+path.substr(7);
 		var pack = path.split(".");
 		if( pack.length > 1 && pack[pack.length-2].charAt(0) == "_" ) {
@@ -152,7 +173,7 @@ class HtmlPrinter {
 
 	public function processPage(t) {
 		switch(t) {
-		case TPackage(p,full,list):
+		case TPackage(p,_,list):
 			processPackage(p,list);
 		default:
 			var head = '<a href="#" onclick="javascript:history.back(-1); return false" class="index">Back</a> | '+makeUrl(indexUrl,"Index","index");
@@ -166,6 +187,7 @@ class HtmlPrinter {
 			case TClassdecl(c): processClass(c);
 			case TEnumdecl(e): processEnum(e);
 			case TTypedecl(t): processTypedef(t);
+			case TAbstractdecl(a): processAbstract(a);
 			case TPackage(_,_,_): throw "ASSERT";
 			}
 			print(head);
@@ -180,8 +202,10 @@ class HtmlPrinter {
 				if( filtered(full,true) )
 					continue;
 				var isPrivate = name.charAt(0) == "_";
-				if( !isPrivate )
-					print('<li><a href="#" class="package" onclick="return toggle(\'$id\')">$name</a><div id="$id" class="package_content">', { id : full.split(".").join("_"), name : name });
+				if( !isPrivate ) {
+					var id = full.split(".").join("_");
+					print('<li><a href="#" class="package" onclick="return toggle(\'$id\')">$name</a><div id="$id" class="package_content">');
+				}
 				var old = curpackage;
 				curpackage = full;
 				processPackage(name,list);
@@ -200,7 +224,7 @@ class HtmlPrinter {
 
 	function processInfos(t : TypeInfos) {
 		if( t.module != null )
-			print('<div class="importmod">import $module</div>',{ module : t.module });
+			print('<div class="importmod">import ${t.module}</div>');
 		if( !t.platforms.isEmpty() ) {
 			print('<div class="platforms">Available in ');
 			display(t.platforms,output,", ");
@@ -279,15 +303,14 @@ class HtmlPrinter {
 				if( f.params != null )
 					print("&lt;"+f.params.join(", ")+"&gt;");
 				print("(");
-				var me = this;
 				display(args,function(a) {
 					if( a.opt )
-						me.print("?");
+						print("?");
 					if( a.name != null && a.name != "" ) {
-						me.print(a.name);
-						me.print(" : ");
+						print(a.name);
+						print(" : ");
 					}
-					me.processType(a.t);
+					processType(a.t);
 				},", ");
 				print(") : ");
 				processType(ret);
@@ -338,13 +361,12 @@ class HtmlPrinter {
 			print(c.name);
 			if( c.args != null ) {
 				print("(");
-				var me = this;
 				display(c.args,function(a) {
 					if( a.opt )
-						me.print("?");
-					me.print(a.name);
-					me.print(" : ");
-					me.processType(a.t);
+						print("?");
+					print(a.name);
+					print(" : ");
+					processType(a.t);
 				},",");
 				print(")");
 			}
@@ -356,6 +378,21 @@ class HtmlPrinter {
 		print('</dl>');
 	}
 
+	function processAbstract( a : Abstractdef ) {
+		print('<div class="classname">');
+		if( a.isPrivate )
+			keyword("private");
+		keyword("abstract");
+		print(fmtpath(a.path));
+		if( a.params.length != 0 ) {
+			print("&lt;");
+			print(a.params.join(", "));
+			print("&gt;");
+		}
+		print('</div>');
+		processInfos(a);
+	}
+	
 	function processTypedef(t : Typedef) {
 		print('<div class="classname">');
 		if( t.isPrivate )
@@ -394,19 +431,8 @@ class HtmlPrinter {
 		switch( t ) {
 		case CAnonymous(fields):
 			print('<dl>');
-			for( f in fields ) {
-				processClassField(all,{
-					name : f.name,
-					type : f.t,
-					isPublic : true,
-					isOverride : false,
-					doc : null,
-					get : RNormal,
-					set : RNormal,
-					params : null,
-					platforms : platforms,
-				},false);
-			}
+			for( f in fields )
+				processClassField(all,f,false);
 			print('</dl>');
 		default:
 			if( all.length != platforms.length ) {
@@ -424,8 +450,11 @@ class HtmlPrinter {
 		print(makePathUrl(path,"type"));
 		if( params != null && !params.isEmpty() ) {
 			print("&lt;");
-			for( t in params )
+			var first = true;
+			for( t in params ) {
+				if( first ) first = false else print(", ");
 				processType(t);
+			}
 			print("&gt;");
 		}
 	}
@@ -439,6 +468,8 @@ class HtmlPrinter {
 		case CClass(path,params):
 			processPath(path,params);
 		case CTypedef(path,params):
+			processPath(path,params);
+		case CAbstract(path,params):
 			processPath(path,params);
 		case CFunction(args,ret):
 			if( args.isEmpty() ) {
@@ -456,10 +487,9 @@ class HtmlPrinter {
 			processTypeFun(ret,false);
 		case CAnonymous(fields):
 			print("{ ");
-			var me = this;
 			display(fields,function(f) {
-				me.print(f.name+" : ");
-				me.processType(f.t);
+				print(f.name+" : ");
+				processType(f.type);
 			},", ");
 			print("}");
 		case CDynamic(t):

@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package tools.haxedoc;
 import haxe.rtti.CType;
@@ -30,7 +27,7 @@ class Main {
 	static var parser = new haxe.rtti.XmlParser();
 
 	static function loadFile(file,platform,?remap) {
-		var data = neko.io.File.getContent(neko.Web.getCwd()+file);
+		var data = sys.io.File.getContent(neko.Web.getCwd()+file);
 		var x = Xml.parse(data).firstElement();
 		if( remap != null )
 			transformPackage(x,remap,platform);
@@ -50,7 +47,7 @@ class Main {
 	}
 
 	static function save(html : HtmlPrinter,x,file) {
-		var f = neko.io.File.write(file,true);
+		var f = sys.io.File.write(file,true);
 		html.output = f.writeString;
 		html.process(x);
 		f.close();
@@ -65,7 +62,7 @@ class Main {
 			var old = html.baseUrl;
 			html.baseUrl = "../"+html.baseUrl;
 			path += name + "/";
-			try neko.FileSystem.createDirectory(path) catch( e : Dynamic ) { }
+			try sys.FileSystem.createDirectory(path) catch( e : Dynamic ) { }
 			for( e in entries )
 				generateEntry(html,e,path);
 			html.baseUrl = old;
@@ -85,7 +82,7 @@ class Main {
 			html.addFilter(f);
 		save(html,TPackage("root","root",parser.root),"index.html");
 		html.baseUrl = "";
-		try neko.FileSystem.createDirectory("content") catch( e : Dynamic ) { }
+		try sys.FileSystem.createDirectory("content") catch( e : Dynamic ) { }
 		for( e in parser.root )
 			generateEntry(html,e,"content/");
 	}
@@ -94,7 +91,7 @@ class Main {
 		if( neko.Web.isModNeko ) {
 			var h = neko.Web.getParams();
 			var dataFile = neko.Web.getCwd()+".data";
-			var data : TypeRoot = try neko.Lib.unserialize(neko.io.File.getBytes(dataFile)) catch( e : Dynamic ) null;
+			var data : TypeRoot = try neko.Lib.unserialize(sys.io.File.getBytes(dataFile)) catch( e : Dynamic ) null;
 			if( h.get("reload") != null || data == null ) {
 				var baseDir = "../data/media/";
 				loadFile(baseDir+"flash.xml","flash");
@@ -105,7 +102,7 @@ class Main {
 				parser.sort();
 				data = parser.root;
 				var bytes = neko.Lib.serialize(data);
-				var f = neko.io.File.write(dataFile,true);
+				var f = sys.io.File.write(dataFile,true);
 				f.write(bytes);
 				f.close();
 			}
@@ -125,22 +122,29 @@ class Main {
 		} else {
 			var filter = false;
 			var filters = new List();
-			for( x in neko.Sys.args() ) {
+			var pf = null;
+			for( x in Sys.args() ) {
 				if( x == "-f" )
 					filter = true;
+				else if( x == "-v" )
+					parser.newField = function(c,f) {
+						if( f.isPublic && !f.isOverride && !c.isPrivate )
+							Sys.println("[API INCOMPATIBILITY] "+c.path+"."+f.name+" ["+pf+"]");
+					};
 				else if( filter ) {
 					filters.add(x);
 					filter = false;
 				} else {
 					var f = x.split(";");
+					pf = f[1];
 					loadFile(f[0],f[1],f[2]);
 				}
 			}
 			parser.sort();
 			if( parser.root.length == 0 ) {
-				neko.Lib.println("Haxe Doc Generator 2.0 - (c)2006 Motion-Twin");
-				neko.Lib.println(" Usage : haxedoc [xml files] [-f filter]");
-				neko.Sys.exit(1);
+				Sys.println("Haxe Doc Generator 2.0 - (c)2006-2012 Haxe Foundation");
+				Sys.println(" Usage : haxedoc [xml files] [-f filter]");
+				Sys.exit(1);
 			}
 			generateAll(filters);
 		}

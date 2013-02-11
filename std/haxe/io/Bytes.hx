@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005-2008, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.io;
 
@@ -43,6 +40,8 @@ class Bytes {
 		return untyped __call__("ord", b[pos]);
 		#elseif cpp
 		return untyped b[pos];
+		#elseif java
+		return untyped b[pos] & 0xFF;
 		#else
 		return b[pos];
 		#end
@@ -57,6 +56,10 @@ class Bytes {
 		b[pos] = untyped __call__("chr", v);
 		#elseif cpp
 		untyped b[pos] = v;
+		#elseif java
+		b[pos] = cast v;
+		#elseif cs
+		b[pos] = cast v;
 		#else
 		b[pos] = v & 0xFF;
 		#end
@@ -69,11 +72,14 @@ class Bytes {
 		#if neko
 		try untyped __dollar__sblit(b,pos,src.b,srcpos,len) catch( e : Dynamic ) throw Error.OutsideBounds;
 		#elseif php
-		// TODO: test me
 		b = untyped __php__("substr($this->b, 0, $pos) . substr($src->b, $srcpos, $len) . substr($this->b, $pos+$len)"); //__call__("substr", b, 0, pos)+__call__("substr", src.b, srcpos, len)+__call__("substr", b, pos+len);
 		#elseif flash9
 		b.position = pos;
-		b.writeBytes(src.b,srcpos,len);
+		if( len > 0 ) b.writeBytes(src.b,srcpos,len);
+		#elseif java
+		java.lang.System.arraycopy(src.b, srcpos, b, pos, len);
+		#elseif cs
+		cs.system.Array.Copy(src.b, srcpos, b, pos, len);
 		#else
 		var b1 = b;
 		var b2 = src.b;
@@ -102,8 +108,15 @@ class Bytes {
 		b.readBytes(b2,0,len);
 		return new Bytes(len,b2);
 		#elseif php
-		// TODO: test me
 		return new Bytes(len, untyped __call__("substr", b, pos, len));
+		#elseif java
+		var newarr = new java.NativeArray(len);
+		java.lang.System.arraycopy(b, pos, newarr, 0, len);
+		return new Bytes(len, newarr);
+		#elseif cs
+		var newarr = new cs.NativeArray(len);
+		cs.system.Array.Copy(b, pos, newarr, 0, len);
+		return new Bytes(len, newarr);
 		#else
 		return new Bytes(len,b.slice(pos,pos+len));
 		#end
@@ -130,6 +143,8 @@ class Bytes {
 		return length - other.length;
 		#elseif php
 		return untyped __php__("$this->b < $other->b ? -1 : ($this->b == $other->b ? 0 : 1)");
+		//#elseif cs
+		//TODO: memcmp if unsafe flag is on
 		#else
 		var b1 = b;
 		var b2 = other.b;
@@ -139,7 +154,7 @@ class Bytes {
 				#if cpp
 				return untyped b1[i] - untyped b2[i];
 				#else
-				return b1[i] - b2[i];
+				return untyped b1[i] - untyped b2[i];
 				#end
 		return length - other.length;
 		#end
@@ -155,13 +170,17 @@ class Bytes {
 		b.position = pos;
 		return b.readUTFBytes(len);
 		#elseif php
-		// TODO: test me
 		return untyped __call__("substr", b, pos, len);
-//		return untyped __call__("call_user_func_array", "pack", __call__("array_merge", __call__("array", "C*"), __call__("array_slice", b.»a, pos, len)));
 		#elseif cpp
 		var result:String="";
 		untyped __global__.__hxcpp_string_of_bytes(b,result,pos,len);
 		return result;
+		#elseif cs
+		return cs.system.text.Encoding.UTF8.GetString(b, pos, len);
+		#elseif java
+		try
+			return new String(b, pos, len, "UTF-8")
+		catch (e:Dynamic) throw e;
 		#else
 		var s = "";
 		var b = b;
@@ -196,9 +215,15 @@ class Bytes {
 		b.position = 0;
 		return b.readUTFBytes(length);
 		#elseif php
-		// TODO: test me
 		return cast b;
-//		return untyped __call__("call_user_func_array", "pack", __call__("array_merge", __call__("array", "C*"), b.»a));
+		#elseif cs
+		return cs.system.text.Encoding.UTF8.GetString(b, 0, length);
+		#elseif java
+		try
+		{
+			return new String(b, 0, length, "UTF-8");
+		}
+		catch (e:Dynamic) throw e;
 		#else
 		return readString(0,length);
 		#end
@@ -230,18 +255,15 @@ class Bytes {
 		b.length = length;
 		return new Bytes(length,b);
 		#elseif php
-		// TODO: test me
 		return new Bytes(length, untyped __call__("str_repeat", __call__("chr", 0), length));
-		/*
-		if(length > 0)
-			return new Bytes(length, untyped __call__("new _hx_array", __call__("array_fill", 0, length, 0)));
-		else
-			return new Bytes(0, untyped __call__("new _hx_array", __call__("array")));
-		*/
 		#elseif cpp
 		var a = new BytesData();
 		if (length>0) a[length-1] = untyped 0;
-		return new Bytes(length,a);
+		return new Bytes(length, a);
+		#elseif cs
+		return new Bytes(length, new cs.NativeArray(length));
+		#elseif java
+		return new Bytes(length, new java.NativeArray(length));
 		#else
 		var a = new Array();
 		for( i in 0...length )
@@ -263,7 +285,17 @@ class Bytes {
 		#elseif cpp
 		var a = new BytesData();
 		untyped __global__.__hxcpp_bytes_of_string(a,s);
-		return new Bytes(a.length,a);
+		return new Bytes(a.length, a);
+		#elseif cs
+		var b = cs.system.text.Encoding.UTF8.GetBytes(s);
+		return new Bytes(b.Length, b);
+		#elseif java
+		try
+		{
+			var b:BytesData = untyped s.getBytes("UTF-8");
+			return new Bytes(b.length, b);
+		}
+		catch (e:Dynamic) throw e;
 		#else
 		var a = new Array();
 		// utf8-decode
@@ -296,8 +328,30 @@ class Bytes {
 		return new Bytes(untyped __dollar__ssize(b),b);
 		#elseif php
 		return new Bytes(untyped __call__("strlen", b), b);
+		#elseif cs
+		return new Bytes(b.Length,b);
 		#else
 		return new Bytes(b.length,b);
+		#end
+	}
+
+	/**
+		Read the most efficiently possible the n-th byte of the data.
+		Behavior when reading outside of the available data is unspecified.
+	**/
+	public inline static function fastGet( b : BytesData, pos : Int ) : Int {
+		#if neko
+		return untyped __dollar__sget(b,pos);
+		#elseif flash9
+		return b[pos];
+		#elseif php
+		return untyped __call__("ord", b[pos]);
+		#elseif cpp
+		return untyped b[pos];
+		#elseif java
+		return untyped b[pos] & 0xFF;
+		#else
+		return b[pos];
 		#end
 	}
 

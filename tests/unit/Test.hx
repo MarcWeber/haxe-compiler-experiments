@@ -1,6 +1,11 @@
 package unit;
 
-class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Public #end {
+@:expose
+@:keepSub
+#if as3
+@:publicFields
+#end
+class Test #if swf_mark implements mt.Protect #end {
 
 	public function new() {
 	}
@@ -12,7 +17,10 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 
 	function feq( v : Float, v2 : Float, ?pos ) {
 		count++;
-		if( Math.abs(v - v2) > 1e-18 ) report(v+" should be "+v2,pos);
+		if (!Math.isFinite(v) || !Math.isFinite(v2))
+			eq(v, v2, pos);
+		else if ( Math.abs(v - v2) > 1e-15 )
+			report(v+" should be "+v2,pos);
 	}
 
 	function t( v, ?pos ) {
@@ -52,13 +60,37 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 		report(v+" not in "+Std.string(values),pos);
 	}
 
+	function hf(c:Class<Dynamic>, n:String, ?pos:haxe.PosInfos) {
+		Test.count++;
+		if (!Lambda.has(Type.getInstanceFields(c), n))
+			Test.report(Type.getClassName(c) + " should have member field " +n, pos);
+	}
+
+	function nhf(c:Class<Dynamic>, n:String, ?pos:haxe.PosInfos) {
+		Test.count++;
+		if (Lambda.has(Type.getInstanceFields(c), n))
+			Test.report(Type.getClassName(c) + " should not have member field " +n, pos);
+	}
+
+	function hsf(c:Class<Dynamic> , n:String, ?pos:haxe.PosInfos) {
+		Test.count++;
+		if (!Lambda.has(Type.getClassFields(c), n))
+			Test.report(Type.getClassName(c) + " should have static field " +n, pos);
+	}
+
+	function nhsf(c:Class<Dynamic> , n:String, ?pos:haxe.PosInfos) {
+		Test.count++;
+		if (Lambda.has(Type.getClassFields(c), n))
+			Test.report(Type.getClassName(c) + " should not have static field " +n, pos);
+	}
+
 	function infos( m : String ) {
 		reportInfos = m;
 	}
 
 	function async<Args,T>( f : Args -> (T -> Void) -> Void, args : Args, v : T, ?pos : haxe.PosInfos ) {
 		if( asyncWaits.length >= AMAX ) {
-			asyncCache.push(callback(async,f,args,v,pos));
+			asyncCache.push(async.bind(f,args,v,pos));
 			return;
 		}
 		asyncWaits.push(pos);
@@ -76,7 +108,7 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 
 	function asyncExc<Args>( seterror : (Dynamic -> Void) -> Void, f : Args -> (Dynamic -> Void) -> Void, args : Args, ?pos : haxe.PosInfos ) {
 		if( asyncWaits.length >= AMAX ) {
-			asyncCache.push(callback(asyncExc,seterror,f,args,pos));
+		asyncCache.push(asyncExc.bind(seterror,f,args,pos));
 			return;
 		}
 		asyncWaits.push(pos);
@@ -117,7 +149,7 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 		}
 		haxe.Log.trace(msg,pos);
 		reportCount++;
-		if( reportCount == 20 ) {
+		if( reportCount == 50 ) {
 			trace("Too many errors");
 			report = function(msg,?pos) {};
 		}
@@ -144,7 +176,7 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 	}
 
 	static function resetTimer() {
-		#if (neko || php)
+		#if (neko || php || cpp)
 		#else
 		if( timer != null ) timer.stop();
 		timer = new haxe.Timer(10000);
@@ -154,7 +186,11 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 
 	static function onError( e : Dynamic, msg : String, context : String ) {
 		var msg = "???";
-		var stack = haxe.Stack.toString(haxe.Stack.exceptionStack());
+		var stack :String = #if js
+			e.stack;
+		#else
+			haxe.CallStack.toString(haxe.CallStack.exceptionStack());
+		#end
 		try msg = Std.string(e) catch( e : Dynamic ) {};
 		reportCount = 0;
 		report("ABORTED : "+msg+" in "+context);
@@ -183,30 +219,51 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 		var classes = [
 			new TestOps(),
 			new TestBasetypes(),
-			new TestReflect(),
 			new TestBytes(),
-			new TestInt32(),
-			new TestInt64(),
 			new TestIO(),
 			new TestLocals(),
-			new TestSerialize(),
+			new TestEReg(),
+			new TestXML(),
 			new TestMisc(),
 			new TestResource(),
-			new TestEReg(),
-			new TestType(),
-			#if !macro
-			new TestXML(),
-			#end
+			new TestInt64(),
+			new TestReflect(),
+			new TestSerialize(),
 			new TestMeta(),
-//			new TestRemoting(),
+			new TestType(),
+			new TestOrder(),
+			#if !no_pattern_matching
+			new TestMatch(),
+			#end
+			new TestSpecification(),
+			#if cs
+			//new TestCSharp(),
+			#end
+			#if java
+			new TestJava(),
+			#end
+			#if php
+			new TestPhp(),
+			#end
+			#if ((dce == "full") && !interp && !as3)
+			new TestDCE(),
+			#end
+			//new TestUnspecified(),
+			//new TestRemoting(),
 		];
 		var current = null;
-		try {
+		#if (!fail_eager)
+		try
+		#end
+		{
 			asyncWaits.push(null);
 			for( inst in classes ) {
 				current = Type.getClass(inst);
 				for( f in Type.getInstanceFields(current) )
 					if( f.substr(0,4) == "test" ) {
+						#if fail_eager
+						Reflect.callMethod(inst,Reflect.field(inst,f),[]);
+						#else
 						try {
 							Reflect.callMethod(inst,Reflect.field(inst,f),[]);
 						}
@@ -215,13 +272,14 @@ class Test #if swf_mark implements mt.Protect #end #if as3 implements haxe.Publi
 							onError(e,"EXCEPTION",Type.getClassName(current)+"."+f);
 						}
 						#end
+						#end
 						reportInfos = null;
 					}
 			}
 			asyncWaits.remove(null);
 			checkDone();
 		}
-		#if !as3
+		#if (!as3 && !(fail_eager))
 		catch( e : Dynamic ) {
 			asyncWaits.remove(null);
 			onError(e,"ABORTED",Type.getClassName(current));

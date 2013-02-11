@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package js;
 
@@ -38,8 +35,8 @@ class Boot {
 			fl.trace(msg);
 			#else
 			msg += __string_rec(v,"");
-			var d = document.getElementById("haxe:trace");
-			if( d != null )
+			var d;
+			if( __js__("typeof")(document) != "undefined" && (d = document.getElementById("haxe:trace")) != null )
 				d.innerHTML += __unhtml(msg)+"<br/>";
 			else if( __js__("typeof")(console) != "undefined" && console.log != null )
 				console.log(msg);
@@ -59,19 +56,32 @@ class Boot {
 		}
 	}
 
-	private static function __string_rec(o,s) {
+	static inline function isClass(o:Dynamic) : Bool {
+		return untyped __define_feature__("js.Boot.isClass", o.__name__);
+	}
+
+	static inline function isEnum(e:Dynamic) : Bool {
+		return untyped __define_feature__("js.Boot.isEnum", e.__ename__);
+	}
+
+	static inline function getClass(o:Dynamic) : Dynamic {
+		return untyped __define_feature__("js.Boot.getClass", o.__class__);
+	}
+
+	@:ifFeature("has_enum")
+	private static function __string_rec(o,s:String) {
 		untyped {
 			if( o == null )
 			    return "null";
 			if( s.length >= 5 )
 				return "<...>"; // too much deep recursion
 			var t = __js__("typeof(o)");
-			if( t == "function" && (o.__name__ != null || o.__ename__ != null) )
+			if( t == "function" && (isClass(o) || isEnum(o)) )
 				t = "object";
 			switch( t ) {
 			case "object":
 				if( __js__("o instanceof Array") ) {
-					if( o.__enum__ != null ) {
+					if( o.__enum__ ) {
 						if( o.length == 2 )
 							return o[0];
 						var str = o[0]+"(";
@@ -146,7 +156,7 @@ class Boot {
 		return __interfLoop(cc.__super__,cl);
 	}
 
-	private static function __instanceof(o : Dynamic,cl) {
+	@:ifFeature("typed_catch") private static function __instanceof(o : Dynamic,cl) {
 		untyped {
 			try {
 				if( __js__("o instanceof cl") ) {
@@ -154,7 +164,7 @@ class Boot {
 						return (o.__enum__ == null);
 					return true;
 				}
-				if( __interfLoop(o.__class__,cl) )
+				if( __interfLoop(js.Boot.getClass(o),cl) )
 					return true;
 			} catch( e : Dynamic ) {
 				if( cl == null )
@@ -174,77 +184,17 @@ class Boot {
 			default:
 				if( o == null )
 					return false;
-				return o.__enum__ == cl || ( cl == Class && o.__name__ != null ) || ( cl == Enum && o.__ename__ != null );
+				// do not use isClass/isEnum here
+				__feature__("Class.*",if( cl == Class && o.__name__ != null ) return true);
+				__feature__("Enum.*",if( cl == Enum && o.__ename__ != null ) return true);
+				return o.__enum__ == cl;
 			}
 		}
 	}
 
-	private static function __init() {
-		untyped {
-			Lib.isIE = (__js__("typeof document!='undefined'") && document.all != null && __js__("typeof window!='undefined'") && window.opera == null );
-			Lib.isOpera = (__js__("typeof window!='undefined'") && window.opera != null );
-			Array.prototype.copy = Array.prototype.slice;
-			Array.prototype.insert = function(i,x) {
-				__this__.splice(i,0,x);
-			};
-			Array.prototype.remove = if( Array.prototype.indexOf ) function(obj) {
-				var idx = __this__.indexOf(obj);
-				if( idx == -1 ) return false;
-				__this__.splice(idx,1);
-				return true;
-			} else function(obj) {
-				var i = 0;
-				var l = __this__.length;
-				while( i < l ) {
-					if( __this__[i] == obj ) {
-						__this__.splice(i,1);
-						return true;
-					}
-					i++;
-				}
-				return false;
-			};
-			Array.prototype.iterator = function() {
-				return {
-					cur : 0,
-					arr : __this__,
-					hasNext : function() {
-						return __this__.cur < __this__.arr.length;
-					},
-					next : function() {
-						return __this__.arr[__this__.cur++];
-					}
-				}
-			};
-			if( String.prototype.cca == null )
-				String.prototype.cca = String.prototype.charCodeAt;
-			String.prototype.charCodeAt = function(i) {
-				var x = __this__.cca(i);
-				if( x != x ) // fast isNaN
-					return __js__('undefined'); // isNaN will still return true
-				return x;
-			};
-			var oldsub = String.prototype.substr;
-			String.prototype.substr = function(pos,len){
-				if( pos != null && pos != 0 && len != null && len < 0 ) return "";
-				if( len == null ) len = __this__.length;
-				if( pos < 0 ){
-					pos = __this__.length + pos;
-					if( pos < 0 ) pos = 0;
-				}else if( len < 0 ){
-					len = __this__.length + len - pos;
-				}
-				return oldsub.apply(__this__,[pos,len]);
-			};
-			Function.prototype["$bind"] = function(o){
-				var f = function(){
-					return f.method.apply(f.scope, arguments);
-				}
-				f.scope = o;
-				f.method = __this__;
-				return f;
-			}
-		}
+	@:ifFeature("typed_cast") private static function __cast(o : Dynamic, t : Dynamic) {
+		if (__instanceof(o, t)) return o;
+		else throw "Cannot cast " +Std.string(o) + " to " +Std.string(t);
 	}
 
 }

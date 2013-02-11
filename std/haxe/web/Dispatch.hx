@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005-2008, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.web;
 
@@ -30,7 +27,7 @@ import haxe.macro.Type.ClassField;
 import haxe.macro.Context;
 #end
 
-typedef Config = {
+typedef DispatchConfig = {
 	var obj : Dynamic;
 	var rules : Dynamic;
 }
@@ -59,6 +56,7 @@ enum DispatchError {
 	DEInvalidValue;
 	DEMissing;
 	DEMissingParam( p : String );
+	DETooManyValues;
 }
 
 private class Redirect {
@@ -69,9 +67,10 @@ private class Redirect {
 class Dispatch {
 
 	public var parts : Array<String>;
-	public var params : Hash<String>;
+	public var params : haxe.ds.StringMap<String>;
 	public var name : String;
-	public var cfg : Config;
+	public var cfg : DispatchConfig;
+	var subDispatch : Bool;
 
 	public function new(url:String, params) {
 		parts = url.split("/");
@@ -79,13 +78,13 @@ class Dispatch {
 		this.params = params;
 	}
 
-	@:macro public function dispatch( ethis : Expr, obj : ExprRequire<{}> ) : ExprRequire<Void> {
+	public macro function dispatch( ethis : Expr, obj : ExprOf<{}> ) : ExprOf<Void> {
 		var p = Context.currentPos();
 		var cfg = makeConfig(obj);
 		return { expr : ECall({ expr : EField(ethis, "runtimeDispatch"), pos : p }, [cfg]), pos : p };
 	}
 
-	@:macro public function getParams( ethis : Expr ) : Expr {
+	public macro function getParams( ethis : Expr ) : Expr {
 		var p = Context.currentPos();
 		if( PARAMS == null ) {
 			PARAMS = new Array();
@@ -106,7 +105,7 @@ class Dispatch {
 		return name;
 	}
 
-	public function runtimeDispatch( cfg : Config ) {
+	public function runtimeDispatch( cfg : DispatchConfig ) {
 		name = parts.shift();
 		if( name == null )
 			name = "default";
@@ -122,7 +121,11 @@ class Dispatch {
 		}
 		name = "do" + name.charAt(0).toUpperCase() + name.substr(1);
 		var args = [];
+		subDispatch = false;
 		loop(args, r);
+		if( parts.length > 0 && !subDispatch ) {
+			if( parts.length == 1 && parts[parts.length - 1] == "" ) parts.pop() else throw DETooManyValues;
+		}
 		try {
 			Reflect.callMethod(cfg.obj, Reflect.field(cfg.obj, name), args);
 		} catch( e : Redirect ) {
@@ -130,7 +133,7 @@ class Dispatch {
 		}
 	}
 
-	public function redirect( url : String, ?params : Hash<String> ) {
+	public function redirect( url : String, ?params : haxe.ds.StringMap<String> ) {
 		parts = url.split("/");
 		if( parts[0] == "" ) parts.shift();
 		if( params != null ) this.params = params;
@@ -144,15 +147,17 @@ class Dispatch {
 		return checkParams(GET_RULES[cfgIndex], true);
 	}
 
-	function match( v : String, r : MatchRule ) : Dynamic {
+	function match( v : String, r : MatchRule, opt : Bool ) : Dynamic {
 		switch( r ) {
 		case MRInt:
 			if( v == null ) throw DEMissing;
+			if( opt && v == "" ) return null;
 			var v = Std.parseInt(v);
 			if( v == null ) throw DEInvalidValue;
 			return v;
 		case MRFloat:
 			if( v == null ) throw DEMissing;
+			if( opt && v == "" ) return null;
 			var v = Std.parseFloat(v);
 			if( Math.isNaN(v) ) throw DEInvalidValue;
 			return v;
@@ -164,25 +169,26 @@ class Dispatch {
 		case MRDispatch:
 			if( v != null )
 				parts.unshift(v);
+			subDispatch = true;
 			return this;
 		case MRSpod(c, lock):
 			if( v == null ) throw DEMissing;
 			var v = Std.parseInt(v);
 			if( v == null ) throw DEInvalidValue;
-			var cl = Type.resolveClass(c);
+			var cl : Dynamic = Type.resolveClass(c);
 			if( cl == null ) throw "assert";
 			var o : Dynamic;
-			#if spod_macro
-			o = untyped cl.manager.unsafeGet(v, lock);
+			#if !old_spod
+			o = cl.manager.unsafeGet(v, lock);
 			#else
-			o = untyped cl.manager.get(v, lock);
+			o = cl.manager.get(v, lock);
 			#end
 			if( o == null ) throw DEInvalidValue;
 			return o;
 		case MROpt(r) :
 			if( v == null )
 				return null;
-			return match(v, r);
+			return match(v, r, true);
 		}
 	}
 
@@ -195,7 +201,7 @@ class Dispatch {
 				if( opt ) return null;
 				throw DEMissingParam(p.name);
 			}
-			Reflect.setField(po, p.name, match(v, p.rule));
+			Reflect.setField(po, p.name, match(v, p.rule,p.opt));
 		}
 		return po;
 	}
@@ -206,16 +212,19 @@ class Dispatch {
 			loop(args, r);
 			args.push( checkParams(params, opt) );
 		case DRMatch(r):
-			args.push(match(parts.shift(), r));
+			args.push(match(parts.shift(), r, false));
 		case DRMult(rl):
 			for( r in rl )
-				args.push(match(parts.shift(), r));
+				args.push(match(parts.shift(), r, false));
 		case DRMeta(r):
 			loop(args, r);
 			var c = Type.getClass(cfg.obj);
-			if( c == null ) throw "assert";
-			var m = Reflect.field(haxe.rtti.Meta.getFields(c), name);
-			if( m == null ) throw "assert";
+			var m;
+			do {
+				if( c == null ) throw "assert";
+				m = Reflect.field(haxe.rtti.Meta.getFields(c), name);
+				c = Type.getSuperClass(c);
+			} while( m == null );
 			for( mv in Reflect.fields(m) )
 				onMeta(mv, Reflect.field(m, mv));
 		}
@@ -239,12 +248,17 @@ class Dispatch {
 				return MRDispatch;
 			default:
 				var c = i.get();
-				if( c.superClass != null && (c.superClass.t.toString() == "neko.db.Object" || c.superClass.t.toString() == "sys.db.Object") ) {
-					var lock = switch( t ) {
-					case TType(t, _): t.get().name == "Lock";
-					default: false;
+				var csup = c.superClass;
+				while( csup != null ) {
+					var name = csup.t.toString();
+					if( name == "neko.db.Object" || name == "sys.db.Object" ) {
+						var lock = switch( t ) {
+						case TType(t, _): t.get().name == "Lock";
+						default: false;
+						}
+						return MRSpod(i.toString(), lock);
 					}
-					return MRSpod(i.toString(), lock);
+					csup = csup.t.get().superClass;
 				}
 				Context.error("Unsupported dispatch type '"+i.toString()+"'",p);
 			}
@@ -254,6 +268,17 @@ class Dispatch {
 				return MRBool;
 			default:
 				Context.error("Unsupported dispatch type "+e.toString(),p);
+			}
+		case TAbstract(a,_):
+			switch( a.toString() ) {
+			case "Int":
+				return MRInt;
+			case "Float":
+				return MRFloat;
+			case "Bool":
+				return MRBool;
+			default:
+				Context.error("Unsupported dispatch type "+a.toString(),p);
 			}
 		default:
 			Context.error("Unsupported dispatch type "+Std.string(t),p);
@@ -316,6 +341,8 @@ class Dispatch {
 
 	static function makeConfig( obj : Expr ) {
 		var p = obj.pos;
+		if( Context.defined("display") )
+			return { expr :  EObjectDecl([ { field : "obj", expr : obj }, { field : "rules", expr : { expr : EObjectDecl([]), pos : p } } ]), pos : p };
 		var t = Context.typeof(obj);
 		switch( Context.follow(t) ) {
 		case TAnonymous(fl):
@@ -323,6 +350,8 @@ class Dispatch {
 			for( f in fl.get().fields ) {
 				if( f.name.substr(0, 2) != "do" )
 					continue;
+				if (!f.meta.has(':keep'))
+					f.meta.add(':keep', [], f.pos);
 				var r = makeRule(f);
 				fields.push( { field : f.name.charAt(2).toLowerCase() + f.name.substr(3), expr : Context.makeExpr(r,p) } );
 			}
@@ -330,22 +359,30 @@ class Dispatch {
 				Context.error("No dispatch method found", p);
 			var rules = { expr : EObjectDecl(fields), pos : p };
 			return { expr : EObjectDecl([ { field : "obj", expr : obj }, { field : "rules", expr : rules } ]), pos : p };
-		case TInst(i, pl):
+		case TInst(i, _):
 			var i = i.get();
 			// store the config inside the class metadata (only once)
 			if( !i.meta.has("dispatchConfig") ) {
 				var fields = {};
-				for( f in i.fields.get() ) {
-					if( f.name.substr(0, 2) != "do" )
-						continue;
-					var r = makeRule(f);
-					for( m in f.meta.get() )
-						if( m.name.charAt(0) != ":" ) {
-							checkMeta(f);
-							r = DRMeta(r);
-							break;
-						}
-					Reflect.setField(fields, f.name.charAt(2).toLowerCase() + f.name.substr(3), r);
+				var tmp = i;
+				while( true ) {
+					for( f in tmp.fields.get() ) {
+						if( f.name.substr(0, 2) != "do" )
+							continue;
+						if (!f.meta.has(':keep'))
+							f.meta.add(':keep', [], f.pos);
+						var r = makeRule(f);
+						for( m in f.meta.get() )
+							if( m.name.charAt(0) != ":" ) {
+								checkMeta(f);
+								r = DRMeta(r);
+								break;
+							}
+						Reflect.setField(fields, f.name.charAt(2).toLowerCase() + f.name.substr(3), r);
+					}
+					if( tmp.superClass == null )
+						break;
+					tmp = tmp.superClass.t.get();
 				}
 				if( Reflect.fields(fields).length == 0 )
 					Context.error("No dispatch method found", p);
@@ -369,6 +406,7 @@ class Dispatch {
 		switch( Context.getType("haxe.web.Dispatch") ) {
 		case TInst(c, _):
 			var c = c.get();
+			c.meta.remove("getParams");
 			c.meta.add("getParams",[{ expr : EConst(CString(str)), pos : c.pos }],c.pos);
 		default:
 		}
@@ -390,17 +428,17 @@ class Dispatch {
 
 	#end
 
-	@:macro public static function make( obj : ExprRequire<{}> ) : ExprRequire<Config> {
+	public static macro function make( obj : ExprOf<{}> ) : ExprOf<DispatchConfig> {
 		return makeConfig(obj);
 	}
 
-	@:macro public static function run( url : ExprRequire<String>, params : ExprRequire<Hash<String>>, obj : ExprRequire<{}> ) : ExprRequire<Void> {
+	public static macro function run( url : ExprOf<String>, params : ExprOf<haxe.ds.StringMap<String>>, obj : ExprOf<{}> ) : ExprOf<Void> {
 		var p = Context.currentPos();
 		var cfg = makeConfig(obj);
 		return { expr : ECall({ expr : EField({ expr : ENew({ name : "Dispatch", pack : ["haxe","web"], params : [], sub : null },[url,params]), pos : p },"runtimeDispatch"), pos : p },[cfg]), pos : p };
 	}
 
-	static function extractConfig( obj : Dynamic ) : Config {
+	static function extractConfig( obj : Dynamic ) : DispatchConfig {
 		// extract the config from the class metadata (cache result)
 		var c = Type.getClass(obj);
 		var dc = haxe.rtti.Meta.getType(c);

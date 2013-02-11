@@ -1,51 +1,51 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
 // standard haXe types
 
 /**
 	The standard Void type. Only [null] values can be of the type [Void].
 **/
-extern enum Void { }
+@:coreType abstract Void { }
 
 /**
 	The standard Float type, this is a double-precision IEEE 64bit float.
 **/
-extern class Float { }
+@:coreType @:notNull @:runtimeValue abstract Float { }
 
 /**
 	The standard Int type. Its precision depends on the platform.
 **/
-extern class Int extends Float { }
+@:coreType @:notNull @:runtimeValue abstract Int to Float { }
 
-#if (flash9 || flash9doc)
+#if (flash9 || flash9doc || cs)
 /**
 	The unsigned Int type is only defined for Flash9. It's currently
 	handled the same as a normal Int.
 **/
-typedef UInt = Int
+@:coreType @:notNull @:runtimeValue abstract UInt to Int from Int { }
+#end
+
+#if (java || cs)
+@:coreType @:notNull @:runtimeValue abstract Single to Float from Float {}
 #end
 
 /**
@@ -59,26 +59,43 @@ typedef Null<T> = T
 /**
 	The standard Boolean type is represented as an enum with two choices.
 **/
-extern enum Bool {
-	true;
-	false;
+@:coreType @:notNull @:runtimeValue abstract Bool {
 }
 
 /**
 	Dynamic is an internal compiler type which has special behavior.
 	See the haXe language reference for more informations.
 **/
-extern class Dynamic<T> {
+@:coreType @:runtimeValue abstract Dynamic<T> {
 }
 
 /**
-	An Iterator is a structure that permits to list a given container
-	values. It can be used by your own data structures. See the haXe
-	documentation for more informations.
+	An Iterator is a structure that permits iteration over elements of type T.
+
+	Any class with matching hasNext and next fields is considered an Iterator
+	and can then be used e.g. in for-loops. This makes it easy to implement
+	custom iterators.
 **/
 typedef Iterator<T> = {
+	
+	/**
+		Returns false if the iteration is complete, true otherwise.
+		
+		Usually iteration is considered to be complete if all elements of the
+		underlying data structure were handled through calls to next(). However,
+		in custom iterators any logic may be used to determine the completion
+		state.
+	**/
 	function hasNext() : Bool;
+	
+	/**
+		Returns the current item of the Iterator and advances to the next one.
+		
+		This method is not required to check hasNext() first. A call to this
+		method while hasNext() is false yields unspecified behavior.
+	**/
 	function next() : T;
+	
 }
 
 /**

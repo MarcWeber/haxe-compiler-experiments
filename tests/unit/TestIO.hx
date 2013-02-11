@@ -43,10 +43,14 @@ class TestIO extends Test {
 		excv(function() o.writeBytes(b,3,20),OutsideBounds);
 
 		o.writeByte(98);
-		#if (neko || flash9 || php || cpp)
 		o.writeDouble(1.23);
+		o.writeDouble(-1.23);
+		o.writeDouble(0.0);
+		o.writeDouble(-0.0);
 		o.writeFloat(1.2e10);
-		#end
+		o.writeFloat(-1.2e10);
+		o.writeFloat(0.0);
+		o.writeFloat(-0.0);
 		o.writeByte(99);
 
 		var str = "Héllo World !";
@@ -58,12 +62,8 @@ class TestIO extends Test {
 		o.writeInt24(-1234567);
 		excv(function() o.writeInt16(1 << 24),Overflow);
 		excv(function() o.writeInt16(-((1 << 24)+1)),Overflow);
-		o.writeInt31(-123456789);
-		#if !neko
-		// in neko, we can't represent invalid 31 bits integers anyway
-		excv(function() o.writeInt31(1 << 30),Overflow);
-		excv(function() o.writeInt31(-((1 << 30) + 1)),Overflow);
-		#end
+		o.writeInt32(-123456789);
+
 		o.writeInt8(-5);
 		excv(function() o.writeInt8(128),Overflow);
 		excv(function() o.writeInt8(-129),Overflow);
@@ -73,46 +73,44 @@ class TestIO extends Test {
 		o.writeUInt24(0xFF00EE);
 		excv(function() o.writeUInt24(1 << 24),Overflow);
 		excv(function() o.writeUInt24(-1),Overflow);
-		o.writeUInt30(0x3FAABBCC);
-		excv(function() o.writeUInt30(-1),Overflow);
-		excv(function() o.writeUInt30(0x40 << 24),Overflow);
+		o.writeInt32(0x3FAABBCC);
 
-		o.writeInt32(haxe.Int32.make(0xA0FF,0xEEDD));
-		o.writeInt32(haxe.Int32.make(0xC0FF,0xEEDD));
+		o.writeInt32(0xA0FFEEDD);
+		o.writeInt32(0xC0FFEEDD);
 
 		unspec(function() o.writeByte(-1));
 		unspec(function() o.writeByte(257));
 
 		var i = new haxe.io.BytesInput(o.getBytes());
 		i.bigEndian = endian;
-		eq( i.readUInt30(), endian ? 0x00010203 : 0x03020100 );
+		eq( i.readInt32(), endian ? 0x00010203 : 0x03020100 );
 		eq( i.read(b.length).compare(b) , 0 );
 		eq( i.readByte(), 55 );
 		eq( i.read(5).compare(b.sub(3,5)), 0 );
 
 		eq( i.readByte(), 98 );
-		#if (neko || flash9 || php || cpp)
 		eq( i.readDouble(), 1.23 );
+		eq( i.readDouble(), -1.23 );
+		eq( i.readDouble(), 0.0 );
+		eq( i.readDouble(), -0.0 );
 		eq( i.readFloat(), 1.2e10 );
-		#else
-		// these two are not implemented
-		exc(function() i.readDouble());
-		exc(function() i.readFloat());
-		#end
+		eq( i.readFloat(), -1.2e10 );
+		eq( i.readFloat(), 0.0 );
+		eq( i.readFloat(), -0.0 );
 		eq( i.readByte(), 99 );
 
 		eq( i.readString(haxe.io.Bytes.ofString(str).length), str );
 
 		eq( i.readInt16(), -12345 );
 		eq( i.readInt24(), -1234567 );
-		eq( i.readInt31(), -123456789 );
+		eq( i.readInt32(), -123456789 );
 		eq( i.readInt8(), -5 );
 		eq( i.readUInt16(), 0xFF55 );
 		eq( i.readUInt24(), 0xFF00EE );
-		eq( i.readUInt30(), 0x3FAABBCC );
+		eq( i.readInt32(), 0x3FAABBCC );
 
-		eq( haxe.Int32.compare( i.readInt32() , haxe.Int32.make(0xA0FF,0xEEDD) ), 0 );
-		eq( haxe.Int32.compare( i.readInt32() , haxe.Int32.make(0xC0FF,0xEEDD) ), 0 );
+		eq( i.readInt32() , 0xA0FFEEDD );
+		eq( i.readInt32() , 0xC0FFEEDD );
 
 	}
 

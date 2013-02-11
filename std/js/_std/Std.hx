@@ -1,31 +1,30 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
+import js.Boot;
 
-@:core_api class Std {
+@:keepInit
+@:coreApi class Std {
 
-	public static function is( v : Dynamic, t : Dynamic ) : Bool {
+	public static inline function is( v : Dynamic, t : Dynamic ) : Bool {
 		return untyped js.Boot.__instanceof(v,t);
 	}
 
@@ -33,15 +32,14 @@
 		return untyped js.Boot.__string_rec(s,"");
 	}
 
-	public static function int( x : Float ) : Int {
-		if( x < 0 ) return Math.ceil(x);
-		return Math.floor(x);
+	public static inline function int( x : Float ) : Int {
+		return cast(x) | 0;
 	}
 
 	public static function parseInt( x : String ) : Null<Int> {
 		var v = untyped __js__("parseInt")(x, 10);
 		// parse again if hexadecimal
-		if( v == 0 && x.charCodeAt(1) == 'x'.code )
+		if( v == 0 && (x.charCodeAt(1) == 'x'.code || x.charCodeAt(1) == 'X'.code) )
 			v = untyped __js__("parseInt")(x);
 		if( untyped __js__("isNaN")(v) )
 			return null;
@@ -53,26 +51,61 @@
 	}
 
 	public static function random( x : Int ) : Int {
-		return untyped Math.floor(Math.random()*x);
-	}
-
-	@:macro public static function format( fmt : haxe.macro.Expr.ExprRequire<String> ) : haxe.macro.Expr.ExprRequire<String> {
-		return haxe.macro.Context.format(fmt);
+		return untyped x <= 0 ? 0 : Math.floor(Math.random()*x);
 	}
 
 	static function __init__() : Void untyped {
-		String.prototype.__class__ = $hxClasses['String'] = String;
-		String.__name__ = ["String"];
-		Array.prototype.__class__ = $hxClasses['Array'] = Array;
-		Array.__name__ = ["Array"];
-		Int = $hxClasses['Int'] = { __name__ : ["Int"] };
-		Dynamic = $hxClasses['Dynamic'] = { __name__ : ["Dynamic"] };
-		Float = $hxClasses['Float'] = __js__("Number");
-		Float.__name__ = ["Float"];
-		Bool = $hxClasses['Bool'] = { __ename__ : ["Bool"] };
-		Class = $hxClasses['Class'] = { __name__ : ["Class"] };
-		Enum = {};
-		Void = $hxClasses['Void'] = { __ename__ : ["Void"] };
+		__feature__("js.Boot.getClass",String.prototype.__class__ = __feature__("Type.resolveClass",$hxClasses["String"] = String,String));
+		__feature__("js.Boot.isClass",String.__name__ = __feature__("Type.getClassName",["String"],true));
+		__feature__("js.Boot.getClass",Array.prototype.__class__ = __feature__("Type.resolveClass",$hxClasses["Array"] = Array,Array));
+		__feature__("js.Boot.isClass",Array.__name__ = __feature__("Type.getClassName",["Array"],true));
+		__feature__("Date.*", {
+			__feature__("js.Boot.getClass",__js__('Date').prototype.__class__ = __feature__("Type.resolveClass",$hxClasses["Date"] = __js__('Date'),__js__('Date')));
+			__feature__("js.Boot.isClass",__js__('Date').__name__ = ["Date"]);
+		});
+		__feature__("Int.*",{
+			var Int = __feature__("Type.resolveClass", $hxClasses["Int"] = { __name__ : ["Int"] }, { __name__ : ["Int"] });
+		});
+		__feature__("Dynamic.*",{
+			var Dynamic = __feature__("Type.resolveClass", $hxClasses["Dynamic"] = { __name__ : ["Dynamic"] }, { __name__ : ["Dynamic"] });
+		});
+		__feature__("Float.*",{
+			var Float = __feature__("Type.resolveClass", $hxClasses["Float"] = __js__("Number"), __js__("Number"));
+			Float.__name__ = ["Float"];
+		});
+		__feature__("Bool.*",{
+			var Bool = __feature__("Type.resolveEnum",$hxClasses["Bool"] = __js__("Boolean"), __js__("Boolean"));
+			Bool.__ename__ = ["Bool"];
+		});
+		__feature__("Class.*",{
+			var Class = __feature__("Type.resolveClass", $hxClasses["Class"] = { __name__ : ["Class"] }, { __name__ : ["Class"] });
+		});
+		__feature__("Enum.*",{
+			var Enum = {};
+		});
+		__feature__("Void.*",{
+			var Void = __feature__("Type.resolveEnum", $hxClasses["Void"] = { __ename__ : ["Void"] }, { __ename__ : ["Void"] });
+		});
+		__feature__("Array.map",
+			if( Array.prototype.map == null )
+				Array.prototype.map = function(f) {
+					var a = [];
+					for( i in 0...__this__.length )
+						a[i] = f(__this__[i]);
+					return a;
+				}
+		);
+		__feature__("Array.filter",
+			if( Array.prototype.filter == null )
+				Array.prototype.filter = function(f) {
+					var a = [];
+					for( i in 0...__this__.length ) {
+						var e = __this__[i];
+						if( f(e) ) a.push(e);
+					}
+					return a;
+				}
+		);
 	}
 
 }

@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005-2008, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.io;
 
@@ -31,8 +28,12 @@ package haxe.io;
 	Output.
 **/
 class Output {
+	private static var LN2 = Math.log(2);
+	public var bigEndian(default, set) : Bool;
 
-	public var bigEndian(default,setEndian) : Bool;
+	#if java
+	private var helper:java.nio.ByteBuffer;
+	#end
 
 	public function writeByte( c : Int ) : Void {
 		throw "Not implemented";
@@ -53,7 +54,7 @@ class Output {
 			#elseif cpp
 				writeByte(untyped b[pos]);
 			#else
-				writeByte(b[pos]);
+				writeByte(untyped b[pos]);
 			#end
 			pos++;
 			k--;
@@ -67,7 +68,7 @@ class Output {
 	public function close() {
 	}
 
-	function setEndian( b ) {
+	function set_bigEndian( b ) {
 		bigEndian = b;
 		return b;
 	}
@@ -100,8 +101,50 @@ class Output {
 		write(Bytes.ofData(_float_bytes(x,bigEndian)));
 		#elseif php
 		write(untyped Bytes.ofString(__call__('pack', 'f', x)));
+		#elseif cs
+		var bytes = cs.system.BitConverter.GetBytes(cast(x, Single));
+		if (bigEndian == cs.system.BitConverter.IsLittleEndian)
+		{
+			writeByte(bytes[3]);
+			writeByte(bytes[2]);
+			writeByte(bytes[1]);
+			writeByte(bytes[0]);
+		} else {
+			writeByte(bytes[0]);
+			writeByte(bytes[1]);
+			writeByte(bytes[2]);
+			writeByte(bytes[3]);
+		}
+		#elseif java
+		if (helper == null) helper = java.nio.ByteBuffer.allocateDirect(8);
+		var helper = helper;
+		helper.order(bigEndian ? java.nio.ByteOrder.BIG_ENDIAN : java.nio.ByteOrder.LITTLE_ENDIAN);
+
+		helper.putFloat(0, x);
+		writeByte(untyped helper.get(0));
+		writeByte(untyped helper.get(1));
+		writeByte(untyped helper.get(2));
+		writeByte(untyped helper.get(3));
 		#else
-		throw "Not implemented";
+		if (x == 0.0)
+		{
+			writeByte(0); writeByte(0); writeByte(0); writeByte(0);
+			return;
+		}
+		var exp = Math.floor(Math.log(Math.abs(x)) / LN2);
+		var sig = (Math.floor(Math.abs(x) / Math.pow(2, exp) * (2 << 22)) & 0x7FFFFF);
+		var b1 = (exp + 0x7F) >> 1 | (exp>0 ? ((x<0) ? 1<<7 : 1<<6) : ((x<0) ? 1<<7 : 0)),
+			b2 = (exp + 0x7F) << 7 & 0xFF | (sig >> 16 & 0x7F),
+			b3 = (sig >> 8) & 0xFF,
+			b4 = sig & 0xFF;
+		if (bigEndian)
+		{
+			writeByte(b4); writeByte(b3); writeByte(b2); writeByte(b1);
+		}
+		else
+		{
+			writeByte(b1); writeByte(b2); writeByte(b3); writeByte(b4);
+		}
 		#end
 	}
 
@@ -112,8 +155,73 @@ class Output {
 		write(Bytes.ofData(_double_bytes(x,bigEndian)));
 		#elseif php
 		write(untyped Bytes.ofString(__call__('pack', 'd', x)));
+		#elseif cs
+		var bytes = cs.system.BitConverter.GetBytes(x);
+		if (bigEndian == cs.system.BitConverter.IsLittleEndian)
+		{
+			writeByte(bytes[7]);
+			writeByte(bytes[6]);
+			writeByte(bytes[5]);
+			writeByte(bytes[4]);
+			writeByte(bytes[3]);
+			writeByte(bytes[2]);
+			writeByte(bytes[1]);
+			writeByte(bytes[0]);
+		} else {
+			writeByte(bytes[0]);
+			writeByte(bytes[1]);
+			writeByte(bytes[2]);
+			writeByte(bytes[3]);
+			writeByte(bytes[4]);
+			writeByte(bytes[5]);
+			writeByte(bytes[6]);
+			writeByte(bytes[7]);
+		}
+		#elseif java
+		if (helper == null) helper = java.nio.ByteBuffer.allocateDirect(8);
+		var helper = helper;
+		helper.order(bigEndian ? java.nio.ByteOrder.BIG_ENDIAN : java.nio.ByteOrder.LITTLE_ENDIAN);
+
+		helper.putDouble(0, x);
+
+		writeByte(untyped helper.get(0));
+		writeByte(untyped helper.get(1));
+		writeByte(untyped helper.get(2));
+		writeByte(untyped helper.get(3));
+		writeByte(untyped helper.get(4));
+		writeByte(untyped helper.get(5));
+		writeByte(untyped helper.get(6));
+		writeByte(untyped helper.get(7));
 		#else
-		throw "Not implemented";
+		if (x == 0.0)
+		{
+			writeByte(0); writeByte(0); writeByte(0); writeByte(0);
+			writeByte(0); writeByte(0); writeByte(0); writeByte(0);
+			return;
+		}
+
+		var exp = Math.floor(Math.log(Math.abs(x)) / LN2);
+		var sig : Int = Math.floor(Math.abs(x) / Math.pow(2, exp) * Math.pow(2, 52));
+		var sig_h = (sig & cast 34359738367);
+		var sig_l = Math.floor((sig / Math.pow(2,32)));
+		var b1 = (exp + 0x3FF) >> 4 | (exp>0 ? ((x<0) ? 1<<7 : 1<<6) : ((x<0) ? 1<<7 : 0)),
+			b2 = (exp + 0x3FF) << 4 & 0xFF | (sig_l >> 16 & 0xF),
+			b3 = (sig_l >> 8) & 0xFF,
+			b4 = sig_l & 0xFF,
+			b5 = (sig_h >> 24) & 0xFF,
+			b6 = (sig_h >> 16) & 0xFF,
+			b7 = (sig_h >> 8) & 0xFF,
+			b8 = sig_h & 0xFF;
+		if (bigEndian)
+		{
+			writeByte(b8); writeByte(b7); writeByte(b6); writeByte(b5);
+			writeByte(b4); writeByte(b3); writeByte(b2); writeByte(b1);
+		}
+		else
+		{
+			writeByte(b1); writeByte(b2); writeByte(b3); writeByte(b4);
+			writeByte(b5); writeByte(b6); writeByte(b7); writeByte(b8);
+		}
 		#end
 	}
 
@@ -157,49 +265,17 @@ class Output {
 		}
 	}
 
-	public function writeInt31( x : Int ) {
-		#if !neko
-		if( x < -0x40000000 || x >= 0x40000000 ) throw Error.Overflow;
-		#end
+	public function writeInt32( x : Int ) {
 		if( bigEndian ) {
-			writeByte(x >>> 24);
-			writeByte((x >> 16) & 0xFF);
-			writeByte((x >> 8) & 0xFF);
-			writeByte(x & 0xFF);
+			writeByte( x >>> 24 );
+			writeByte( (x >> 16) & 0xFF );
+			writeByte( (x >> 8) & 0xFF );
+			writeByte( x & 0xFF );
 		} else {
-			writeByte(x & 0xFF);
-			writeByte((x >> 8) & 0xFF);
-			writeByte((x >> 16) & 0xFF);
-			writeByte(x >>> 24);
-		}
-	}
-
-	public function writeUInt30( x : Int ) {
-		if( x < 0 #if !neko || x >= 0x40000000 #end ) throw Error.Overflow;
-		if( bigEndian ) {
-			writeByte(x >>> 24);
-			writeByte((x >> 16) & 0xFF);
-			writeByte((x >> 8) & 0xFF);
-			writeByte(x & 0xFF);
-		} else {
-			writeByte(x & 0xFF);
-			writeByte((x >> 8) & 0xFF);
-			writeByte((x >> 16) & 0xFF);
-			writeByte(x >>> 24);
-		}
-	}
-
-	public function writeInt32( x : haxe.Int32 ) {
-		if( bigEndian ) {
-			writeByte( haxe.Int32.toInt(haxe.Int32.ushr(x,24)) );
-			writeByte( haxe.Int32.toInt(haxe.Int32.ushr(x,16)) & 0xFF );
-			writeByte( haxe.Int32.toInt(haxe.Int32.ushr(x,8)) & 0xFF );
-			writeByte( haxe.Int32.toInt(haxe.Int32.and(x,haxe.Int32.ofInt(0xFF))) );
-		} else {
-			writeByte( haxe.Int32.toInt(haxe.Int32.and(x,haxe.Int32.ofInt(0xFF))) );
-			writeByte( haxe.Int32.toInt(haxe.Int32.ushr(x,8)) & 0xFF );
-			writeByte( haxe.Int32.toInt(haxe.Int32.ushr(x,16)) & 0xFF );
-			writeByte( haxe.Int32.toInt(haxe.Int32.ushr(x,24)) );
+			writeByte( x & 0xFF );
+			writeByte( (x >> 8) & 0xFF );
+			writeByte( (x >> 16) & 0xFF );
+			writeByte( x >>> 24 );
 		}
 	}
 

@@ -1,35 +1,39 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
 /**
 	The basic String class.
+	
+	A haxe String is immutable, it is not possible to modify individual
+	characters. No method of this class changes the state of [this] String.
+	
+	Strings can be constructed using the string literal syntax "string value".
+	
+	String can be concatenated by using the + operator. If an operand is not a
+	String, it is passed through Std.string() first.
 **/
 extern class String {
 
 	/**
-		The number of characters in the String.
+		The number of characters in [this] String.
 	**/
 	var length(default,null) : Int;
 
@@ -39,56 +43,118 @@ extern class String {
 	function new(string:String) : Void;
 
 	/**
-		Returns an String where all characters have been uppercased.
+		Returns a String where all characters of [this] String are upper case.
+		
+		Affects the characters [a-z]. Other characters remain unchanged.
 	**/
 	function toUpperCase() : String;
 
 	/**
-		Returns an String where all characters have been lowercased.
+		Returns a String where all characters of [this] String are lower case.
+		
+		Affects the characters [A-Z]. Other characters remain unchanged.
 	**/
 	function toLowerCase() : String;
 
 	/**
-		Returns the character at the given position.
-		Returns the empty String if outside of String bounds.
+		Returns the character at position [index] of [this] String.
+		
+		If [index] is negative or exceeds [this].length, the empty String ""
+		is returned.
 	**/
-	function charAt( index : Int) : String;
+	function charAt(index : Int) : String;
 
 	/**
-		Returns the character code at the given position.
-		Returns [null] if outside of String bounds.
+		Returns the character code at position [index] of [this] String.
+		
+		If [index] is negative or exceeds [this].length, null is returned.
+		
+		To obtain the character code of a single character, "x".code can be used
+		instead to inline the character code at compile time. Note that this
+		only works on String literals of length 1.
 	**/
 	function charCodeAt( index : Int) : Null<Int>;
 
 	/**
-		Returns the index of first occurence of [value]
-		Returns [1-1] if [value] is not found.
-		The optional [startIndex] parameter allows you to specify at which character to start searching.
-		The position returned is still relative to the beginning of the string.
+		Returns the position of the leftmost occurence of [str] within [this]
+		String.
+		
+		If [startIndex] is given, the search is performed within the substring
+		of [this] String starting from [startIndex]. Otherwise the search is
+		performed within [this] String. In either case, the returned position
+		is relative to the beginning of [this] String.
+		
+		If [str] cannot be found, -1 is returned.
 	**/
 	function indexOf( str : String, ?startIndex : Int ) : Int;
 
 	/**
-		Similar to [indexOf] but returns the latest index.
+		Returns the position of the rightmost occurence of [str] within [this]
+		String.
+		
+		If [startIndex] is given, the search is performed within the substring
+		of [this] String from 0 to [startIndex]. Otherwise the search is
+		performed within [this] String. In either case, the returned position
+		is relative to the beginning of [this] String.
+		
+		If [str] cannot be found, -1 is returned.
 	**/
 	function lastIndexOf( str : String, ?startIndex : Int ) : Int;
 
 	/**
-		Split the string using the specified delimiter.
+		Splits [this] String at each occurence of [delimiter].
+		
+		If [delimiter] is the empty String "", [this] String is split into an
+		Array of [this].length elements, where the elements correspond to the
+		characters of [this] String.
+		
+		If [delimiter] is not found within [this] String, the result is an Array
+		with one element, which equals [this] String.
+		
+		If [delimiter] is null, the result is unspecified.
+		
+		Otherwise, [this] String is split into parts at each occurence of
+		[delimiter]. If [this] String starts (or ends) with [delimiter}, the
+		result Array contains a leading (or trailing) empty String "" element.
+		Two subsequent delimiters also result in an empty String "" element.
 	**/
 	function split( delimiter : String ) : Array<String>;
 
 	/**
-		Returns a part of the String, taking [len] characters starting from [pos].
-		If [len] is not specified, it takes all the remaining characters.
+		Returns [len] characters of [this] String, starting at position [pos].
+		
+		If [len] is omitted, all characters from position [pos] to the end of
+		[this] String are included.
+		
+		If [pos] is negative, its values is calculated from the end	of [this]
+		String by [this].length + [pos]. If this yields a negative value, 0 is
+		used instead.
+		
+		If [len] is negative, the result is unspecified.
 	**/
 	function substr( pos : Int, ?len : Int ) : String;
+
+	/**
+		Returns the part of [this] String from [startIndex] to [endIndex].
+		
+		If [endIndex] is omitted, [this].length is used instead.
+		
+		If [startIndex] or [endIndex] are negative, 0 is used instead.
+		
+		If [startIndex] exceeds [endIndex], they are swapped.
+	**/
+	function substring( startIndex : Int, ?endIndex : Int ) : String;
 
 	/**
 		Returns the String itself.
 	**/
 	function toString() : String;
 
+	/**
+		Returns the String corresponding to the character code [code].
+		
+		If [code] is negative or has another invalid value, the result is
+		unspecified.
+	**/	
 	static function fromCharCode( code : Int ) : String;
-
 }

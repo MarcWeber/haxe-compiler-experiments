@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005-2010, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.macro;
 import haxe.macro.Expr;
@@ -28,6 +25,7 @@ import haxe.macro.Expr;
 /**
 	This is an API that can be used by macros implementations.
 **/
+#if !neko @:noDoc #end
 class Context {
 
 #if neko
@@ -92,10 +90,40 @@ class Context {
 	}
 
 	/**
+		Returns the name of the method from which the macro was called
+	**/
+	public static function getLocalMethod() : Null<String> {
+		var l : String = load("local_method", 0)();
+		if (l == "") return null;
+		return new String(l);
+	}
+
+	/**
+		Returns classes which are available for "using" where the macro was called
+	**/
+	public static function getLocalUsing() :  Array<Type.Ref<Type.ClassType>> {
+		return load("local_using", 0)();
+	}
+
+	/**
+		Returns local variables accessible where the macro was called
+	**/
+	public static function getLocalVars() : haxe.ds.StringMap<Type> {
+		return load("local_vars", 0)();
+	}
+
+	/**
 		Tells is the given compiler directive has been defined with -D
 	**/
 	public static function defined( s : String ) : Bool {
 		return load("defined", 1)(untyped s.__s);
+	}
+
+	/**
+		Returns the value defined through -D key=value
+	**/
+	public static function definedValue( key : String ) : String {
+		return new String(load("defined_value", 1)(untyped key.__s));
 	}
 
 	/**
@@ -113,10 +141,17 @@ class Context {
 	}
 
 	/**
-		Parse an expression.
+		Parse a constructed string into the corresponding expression.
 	**/
 	public static function parse( expr : String, pos : Position ) : Expr {
-		return load("parse", 2)(untyped expr.__s, pos);
+		return load("parse", 3)(untyped expr.__s, pos, false);
+	}
+
+	/**
+		Parse a string contained into source code into the corresponding expression. Errors positions are reported within this string
+	**/
+	public static function parseInlineString( expr : String, pos : Position ) : Expr {
+		return load("parse", 3)(untyped expr.__s, pos, true);
 	}
 
 	/**
@@ -141,10 +176,31 @@ class Context {
 	}
 
 	/**
+		Set a callback function that will be called when a type cannot be found.
+	**/
+	public static function onTypeNotFound ( callb : String -> TypeDefinition ) {
+		load("on_type_not_found",1)(callb);
+	}
+
+	/**
 		Evaluate the type a given expression would have in the context of the current macro call.
 	**/
 	public static function typeof( e : Expr ) : Type {
 		return load("typeof", 1)(e);
+	}
+
+	/**
+		Returns the ComplexType corresponding to the given Type.
+	**/
+	public static function toComplexType( t : Type ) : Null<ComplexType> {
+		return load("to_complex", 1)(t);
+	}
+
+	/**
+		Returns true if t1 and t2 unify, false otherwise
+	**/
+	public static function unify( t1 : Type, t2 : Type) : Bool {
+		return load("unify", 2)(t1, t2);
 	}
 
 	/**
@@ -191,11 +247,35 @@ class Context {
 		load("define_type", 1)(t);
 	}
 
+
+	/**
+		Return the raw expression corresponding to the given typed expression.
+	**/
+	public static function getTypedExpr( t : Type.TypedExpr ) : Expr {
+		return load("get_typed_expr",1)(t);
+	}
+
+	/**
+		Manually add a dependency between a module and a third party file :
+		make sure the module gets recompiled (if it was cached) in case the extern file has been modified as well.
+	**/
+	public static function registerModuleDependency( modulePath : String, externFile : String ) {
+		load("module_dependency", 2)(untyped modulePath.__s,untyped externFile.__s);
+	}
+
+	/**
+		Add a macro call to perform in case the module is reused by the compilation cache.
+	**/
+	public static function registerModuleReuseCall( modulePath : String, macroCall : String ) {
+		load("module_reuse_call", 2)(untyped modulePath.__s,untyped macroCall.__s);
+	}
+
+	@:allow(haxe.macro.TypeTools)
 	static function load( f, nargs ) : Dynamic {
 		#if macro
 		return neko.Lib.load("macro", f, nargs);
 		#else
-		return Reflect.makeVarArgs(function(_) throw "Can't be called outside of macro");
+		return Reflect.makeVarArgs(function(_) return throw "Can't be called outside of macro");
 		#end
 	}
 

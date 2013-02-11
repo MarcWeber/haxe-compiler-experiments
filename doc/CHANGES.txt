@@ -1,7 +1,116 @@
-2012-??-??: 3.00
+2012-??-??: 3.0.0
+	flash : updated player 11.4 api
+	all : allowed named functions as r-value
+	all : fixed using + overload usage
+	all : allow any type constraint for type parameters
+	all : make property type optional (when a initial value is set)
+	all : Std.random(x) when x <= 0 is now always 0
+	spod : added serialized data with SData<T>
+	all : Dispatcher will now throw DETooManyValues
+	all : speed up neko compilation by using native compiler
+	all : allow @:generic on functions
+	all : allow constructing generic type parameters
+	swf : added support for SWC files in -swf-lib
+	macro : added Context.onTypeNotFound callback for unresolved types
+	js : no JS embed as default (use -D embed-js instead)
+	all : added abstract types (Int/Float/Bool/Void/Class/Enum/EnumValue)
+	all : added --help-defines
+	all : changed DCE with three modes : std(default), no and full
+	all : Haxe3 packages changes (see http://haxe.org/manual/haxe3)
+	all : Removed haxe.Int32, haxe.Firebug, haxe.TimerQueue
+	all : added -D key=value and #if (key >= value) operations
+	all : StringTools.htmlEscape/unescape nows handle "/&quot; and '/&#039;
+	all : using and import must now appear before any type declaration in a file
+	all : no longer create variable fields for pure getter/setter properties (unless @:isVar is used)
+	all : use default get_prop/set_prop instead of custom getter/setter names for properties
+	js : added JQuery.delegateTarget
+	macro : removed EType and CType, added EMeta, modified ESwitch
+	all : allow @metadata expr
+	all : replaced haxe.rtti.Generic interface with @:generic metadata
+	all : no longer infer arrays of mixed types as Array<Dynamic>
+	all : all type/import/enum constructor resolution now follows the shadowing principle (latest has priority)
+	all : added EReg.matchSub, renamed EReg.customReplace to map
+	all : no longer allow initialization of extern non-inline variables
+	swf : fixed out of memory errors on very large swf-lib files
+	swf : added -D swf_preloader_frame, swf_gpu, swf_direct_blit
+	swf : added -D swf_script_timeout=seconds, swf_debug_password=password, swf_metadata=file
+	swf : added -swf-lib-extern
+	swf : added @:font support (beta)
+	all : added GADT support in enums
+	all : added pattern matching (beta)
+	all : changed callback(func, args) to func.bind(args)
+	macro : added haxe.macro.ExprTools/ComplexTypeTools/TypeTools
+	macro : changed reification syntax to ${expr}, $a{array}, $p{path}, $v{value}
+	macro : allow macro @:pos(pos-expr) to inject positions for reification
+	all : added array comprehension
+	flash : Vector.length is now Int instead of UInt
+	all : moved haxe.BaseCode, haxe.Md5 and haxe.SHA1 to haxe.crypto package
+	all : disallow Void variables and arguments (still allow S -> T to S -> Void)
+	all : added Array.map/filter
+	all : added spell check suggestions for enum constructors and fields
+	all : added opaque abstract(T) types
+	all : allow operator overloading on opaque abstract types
+	all : renamed IntIter to IntIterator
+	all : added Map
+	all : added haxe.ds with StringMap, IntMap, HashMap, ObjectMap, Vector, GenericStack
+	all : removed Hash, IntHash and haxe.FastList in favor of the types in haxe.ds
+	all : haxe.xml.Parser now handles entities consistently across platforms
+
+2012-07-16: 2.10
+	java/cs : added two new targets (beta)
+	all : fixed List and Null<T> for first, last, pop
+	js : added js.Lib.debug()
+	flash : fixed Xml.parent() when no parent
+	flash : fixed haxe.io.Bytes.blit when len=0
+	js/php/flash8 : fixed haxe.Int32.mul overflow on 52 bits
+	js : fixed haxe.Utf8 usage (static 'length' issue)
+	all : does not allow overriding var/prop
+	flash : removed wrapping for Xml nodes, use instead specific compare when comparing two typed nodes
+	js : use new haxe.xml.Parser (faster, not based on Regexp)
+	flash : fixed completion issue with for( x in Vector )
+	all : optimized Std.int(123) and Std.int(123.45)
+	flash : bugfix for @:bitmap with 24-bits PNG (flash decode wrong colors)
+	as3 : fixed EnumValue becomes Object
+	js : removed js.Lib.isIE/isOpera (not complete, use js.JQuery.browser instead)
+	all : function parameters are nullable if they are declared with '?'
+	all : added support for finding common base types of multiple types (unify_min) for array, switch, if
+	php : do not implement duplicate interfaces
+	haxelib : added git support through haxelib git
+	all : allow derived classes to widen method visibility
+	macro : added haxe.macro.Context.getLocalMethod
+	macro : improved support of "using" macro functions
+	php : optimized Xml implementation
+	php : fixed Reflect.get/setProperty not working on PHP < 5.3
+	all : support for callback(f, _, x)
+	all : allow private access between classes that have a common base class
+	all : added Output.writeFloat/Double and Input.readFloat/Double
+	all : support for var:{x:Float} = { x = 1 } constant structure subtyping
+	all : allow contravariant function arguments and covariant function returns in overrides
+	macro : support for final Array<Expr> argument as rest argument
+	macro : use top-down inference on macro calls
+	all : made "using" imply "import"
+	all : made String concat more consistent across platforms (add Std.string wrappers)
+	all : allow direct member variable/property and static property initialization
+	js : greatly reduced amount of generated code by using smarter DCE
+	php : made modulo operations more consistent
+	all : allow local functions to have both type parameters and be inlined
+	all : functions type parameters can be constraint (will be checked at end of compilation)
+	macro : use NekoVM runtime for regexps, process and xml parsing
+	flash : allow @:getter/@:setter in interfaces
+	flash : added support for "arguments" in methods
+	all : not used enums and inline var/methods are now removed by DCE
+	all : allow @:overload to use type parameters and not-absolute type paths
+	all : ensure that Std.string of arrays and enums are now consistent across platforms
+	all : allow to inline functions containing other functions
+	xml : added metadata output to xml generator
+	macro : added macro <expr> and macro : <type> reification
+	all : renamed type(e) to $type(e)
+	as3 : support for metadata and resources, and other fixes
+
+2012-04-14: 2.09
 	all : optimized const == const and const != const (with different const types)
 	all : add Type.allEnums(e)
-	all : fixed some issue with completion
+	all : big improvements with completion speed and fixed many issues
 	flash9 : fixed -D swfprotected with swc output
 	neko : added ~ implementation
 	js : upgraded jquery version, more api overloads
@@ -18,11 +127,33 @@
 	js : removed --js-namespace, added $hxClasses
 	flash : output traces to native trace() when using -D fdb or -D nativeTrace
 	all : allowed abitrary string fields in anonymous objects
-	all : structure fields which are Null<X> are now optional (for constant values)
+	all : allowed optional structure fields (for constant structs)
 	all : allowed optional args in functions types (?Int -> Void)
-	all : added Reflect.getProperty/setProperty 
-		(partial support : neko, js only so far)
-	all : added --cache, --wait and --cwd
+	all : added Reflect.getProperty/setProperty (except flash8)
+	all : added --wait and --cwd and --connect (parsed files and module caching)
+	all : fixed completion in macros calls arguments
+	all : fixed DCE removing empty but still used interfaces/superclasses
+	all : added haxe.Utf8 (crossplatform)
+	neko : Reflect now uses $fasthash (require neko 1.8.2)
+	all : allow \uXXXX in regexp (although not supported everywhere)
+	js : make difference between values and statements expressions in JSGenApi
+	js : added source mapping with -debug (replace previous stack emulation)
+	flash : added @:file("a.dat") class File extends flash.utils.ByteArray
+	flash : added @:sound("file.wav|mp3") class S extends flash.media.Sound
+	js : added --js-modern for wrapping output in a closure and ES5 strict mode
+	all : null, true and false are now keywords
+	all : neko.io.Path, cpp.io.Path and php.io.Path are now haxe.io.Path
+	neko, cpp, php : added Sys class, sys.io and sys.net packages and "sys" define
+	all : allow to access root package with std prefix (std.Type for example)
+	all : added haxe.EnumFlags
+	sys : io.File.getChar/stdin/stdout/stderr are now in Sys class
+	cpp : Reflect.getField and Reflect.setField no longer call property functions.  Use Reflect.getProperty and Refelect.setProperty instead.
+	cpp : Default arguments now use Null<T> for performance increase and interface compatibility
+	cpp : Added metadata options for injecting native cpp code into headers, classes and functions
+	php : added php.Lib.mail
+	(hotfix) fixed bug in completion and disabled profiling on Linux
+	(hotfix) fixed $ssize when doing new String(v) in neko
+	(hotfix) fixed bug with properties in interfaces for Flash & PHP
 
 2011-09-25: 2.08
 	js : added js.JQuery

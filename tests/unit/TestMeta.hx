@@ -38,7 +38,7 @@ package unit;
 
 		var m = haxe.rtti.Meta.getFields(TestMeta);
 		eq( fields(m), "_" );
-		eq( fields(m._), "new" );
+		eq( fields(m._), #if as3 "_"+#end "new" );
 
 		var m = haxe.rtti.Meta.getStatics(TestMeta);
 		eq( fields(m), "foo" );
@@ -54,6 +54,26 @@ package unit;
 		eq( c.k, null );
 	}
 
+	public function testExprMeta() {
+		eq(getMeta(@foo a).name, "foo");
+		eq(getMeta(@foo("a") b).name, "foo");
+		eq(getMeta(@foo ("a")).name, "foo");
+		
+		var m = getMeta(@bar("1", "foo") null);
+		eq(m.name, "bar");
+		eq(m.args[0], "1");
+		eq(m.args[1], "foo");
+		
+		eq(getMeta(@foo ("1")).args.length, 0);
+		eq(getMeta(@foo("1") "2").args.length, 1);
+	}
 
-
+	static macro function getMeta(e) {
+		switch(e.expr) {
+			case EMeta(m, _):
+				return macro { name: $v{m.name}, args: $a{m.params} };
+			default:
+				return macro report("Metadata expected");
+		}
+	}
 }

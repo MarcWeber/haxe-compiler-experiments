@@ -1,37 +1,28 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
+@:coreApi class Reflect {
 
-@:core_api class Reflect {
-
-	public static function hasField( o : Dynamic, field : String ) : Bool untyped {
-		if( o.hasOwnProperty != null )
-			return o.hasOwnProperty(field);
-		var arr = fields(o);
-		for( t in arr.iterator() )
-			if( t == field ) return true;
-		return false;
+	public static function hasField( o : Dynamic, field : String ) : Bool {
+		return untyped __js__('Object').prototype.hasOwnProperty.call(o, field);
 	}
 
 	public inline static function field( o : Dynamic, field : String ) : Dynamic untyped {
@@ -49,37 +40,31 @@
 
 	public static inline function getProperty( o : Dynamic, field : String ) : Dynamic untyped {
 		var tmp;
-		return if( o == null ) null else if( o.__properties__ && (tmp=o.__properties__["get_"+field]) ) o[tmp]() else o[field];
+		return if( o == null ) __define_feature__("Reflect.getProperty",null) else if( o.__properties__ && (tmp=o.__properties__["get_"+field]) ) o[tmp]() else o[field];
 	}
 
 	public static inline function setProperty( o : Dynamic, field : String, value : Dynamic ) : Void untyped {
 		var tmp;
-		if( o.__properties__ && (tmp=o.__properties__["set_"+field]) ) o[tmp](value) else o[field] = value;
+		if( o.__properties__ && (tmp=o.__properties__["set_"+field]) ) o[tmp](value) else o[field] = __define_feature__("Reflect.setProperty",value);
 	}
 
 	public inline static function callMethod( o : Dynamic, func : Dynamic, args : Array<Dynamic> ) : Dynamic untyped {
 		return func.apply(o,args);
 	}
 
-	public static function fields( o : Dynamic ) : Array<String> untyped {
-		if( o == null ) return new Array();
-		var a = new Array();
-		if( o.hasOwnProperty ) {
-			__js__("for(var i in o) if( o.hasOwnProperty(i) ) a.push(i)");
-		} else {
-			var t;
-			try{ t = o.__proto__; } catch( e : Dynamic ) { t = null; }
-			if( t != null )
-				o.__proto__ = null;
-			__js__("for(var i in o) if( i != \"__proto__\" ) a.push(i)");
-			if( t != null )
-				o.__proto__ = t;
+	public static function fields( o : Dynamic ) : Array<String> {
+		var a = [];
+		if (o != null) untyped {
+			var hasOwnProperty = __js__('Object').prototype.hasOwnProperty;
+			__js__("for( var f in o ) {");
+			if( f != "__id__" && hasOwnProperty.call(o, f) ) a.push(f);
+			__js__("}");
 		}
 		return a;
 	}
 
 	public static function isFunction( f : Dynamic ) : Bool untyped {
-		return __js__("typeof(f)") == "function" && f.__name__ == null;
+		return __js__("typeof(f)") == "function" && !(js.Boot.isClass(f) || js.Boot.isEnum(f));
 	}
 
 	public static function compare<T>( a : T, b : T ) : Int {
@@ -98,7 +83,7 @@
 		if( v == null )
 			return false;
 		var t = __js__("typeof(v)");
-		return (t == "string" || (t == "object" && !v.__enum__) || (t == "function" && v.__name__ != null));
+		return (t == "string" || (t == "object" && !v.__enum__) || (t == "function" && (js.Boot.isClass(v) || js.Boot.isEnum(v))));
 	}
 
 	public static function deleteField( o : Dynamic, f : String ) : Bool untyped {
@@ -114,11 +99,10 @@
 		return o2;
 	}
 
+	@:overload(function( f : Array<Dynamic> -> Void ) : Dynamic {})
 	public static function makeVarArgs( f : Array<Dynamic> -> Dynamic ) : Dynamic {
-		return function() untyped {
-			var a = new Array();
-			for( i in 0...arguments.length )
-				a.push(arguments[i]);
+		return function() {
+			var a = untyped Array.prototype.slice.call(__js__("arguments"));
 			return f(a);
 		};
 	}

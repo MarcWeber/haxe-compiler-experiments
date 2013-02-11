@@ -1,31 +1,27 @@
 /*
- * Copyright (c) 2005-2008, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.io;
 
 class BytesInput extends Input {
-
 	var b : BytesData;
 	#if !flash9
 	var pos : Int;
@@ -66,6 +62,8 @@ class BytesInput extends Input {
 			return untyped __call__("ord", b[pos++]);
 			#elseif cpp
 			return untyped b[pos++];
+			#elseif java
+			return untyped b[pos++] & 0xFF;
 			#else
 			return b[pos++];
 			#end
@@ -81,6 +79,22 @@ class BytesInput extends Input {
 			var avail : Int = b.bytesAvailable;
 			if( len > avail && avail > 0 ) len = avail;
 			try b.readBytes(buf.getData(),pos,len) catch( e : Dynamic ) throw new Eof();
+		#elseif java
+			var avail : Int = this.len;
+			if ( len > avail ) len = avail;
+			if (len == 0)
+				throw new Eof();
+			java.lang.System.arraycopy(this.b, this.pos, buf.getData(), pos, len);
+			this.pos += len;
+			this.len -= len;
+		#elseif cs
+			var avail : Int = this.len;
+			if ( len > avail ) len = avail;
+			if (len == 0)
+				throw new Eof();
+			cs.system.Array.Copy(this.b,this.pos, buf.getData(), pos, len);
+			this.pos += len;
+			this.len -= len;
 		#else
 			if( this.len == 0 && len > 0 )
 				throw new Eof();
@@ -103,7 +117,7 @@ class BytesInput extends Input {
 	}
 
 	#if flash9
-	override function setEndian(e) {
+	override function set_bigEndian(e) {
 		bigEndian = e;
 		b.endian = e ? flash.utils.Endian.BIG_ENDIAN : flash.utils.Endian.LITTLE_ENDIAN;
 		return e;
@@ -129,22 +143,8 @@ class BytesInput extends Input {
 		return try b.readUnsignedShort() catch( e : Dynamic ) throw new Eof();
 	}
 
-	override function readInt31() {
-		var n;
-		try n = b.readInt() catch( e : Dynamic ) throw new Eof();
-		if( (n >>> 30) & 1 != (n >>> 31) ) throw Error.Overflow;
-		return n;
-	}
-
-	override function readUInt30() {
-		var n;
-		try n = b.readInt() catch( e : Dynamic ) throw new Eof();
-		if( (n >>> 30) != 0 ) throw Error.Overflow;
-		return n;
-	}
-
-	override function readInt32() : haxe.Int32 {
-		return try cast b.readInt() catch( e : Dynamic ) throw new Eof();
+	override function readInt32() : Int {
+		return try b.readInt() catch( e : Dynamic ) throw new Eof();
 	}
 
 	override function readString( len : Int ) {

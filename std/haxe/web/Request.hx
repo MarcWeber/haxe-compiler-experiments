@@ -1,3 +1,24 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 package haxe.web;
 
 class Request {
@@ -5,14 +26,14 @@ class Request {
 	/**
 		Returns the current page GET and POST parameters (only GET parameters for Javascript)
 	**/
-	public static function getParams() : Hash<String> {
+	public static function getParams() : haxe.ds.StringMap<String> {
 		#if neko
 		return neko.Web.getParams();
 		#elseif php
 		return php.Web.getParams();
 		#elseif js
 		var get : String = untyped window.location.search.substr(1);
-		var params = new Hash();
+		var params = new haxe.ds.StringMap();
 		for( p in ~/[&;]/g.split(get) ) {
 			var pl = p.split("=");
 			if( pl.length < 2 ) continue;
@@ -48,5 +69,5 @@ class Request {
 		return untyped window.location.pathname;
 		#end
 	}
-	
+
 }

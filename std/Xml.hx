@@ -1,28 +1,24 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
 /**
 	An abstract type representing the type of the Xml
 	Node. You can compare it to [Xml] statics and can
@@ -70,7 +66,7 @@ extern class Xml {
 	/**
 		A type of Xml node.
 	**/
-	static var Prolog(default,null) : XmlType;
+	static var ProcessingInstruction(default,null) : XmlType;
 
 	/**
 		A type of Xml node.
@@ -110,7 +106,7 @@ extern class Xml {
 	/**
 		Creates a node of the given type.
 	**/
-	static function createProlog( data : String ) : Xml;
+	static function createProcessingInstruction( data : String ) : Xml;
 
 	/**
 		Creates a node of the given type.
@@ -127,16 +123,12 @@ extern class Xml {
 	/**
 		Returns the node name of an Element.
 	**/
-	var nodeName(getNodeName,setNodeName) : String;
-	private function getNodeName() : String;
-	private function setNodeName( name : String ) : String;
+	var nodeName(get,set) : String;
 
 	/**
 		Returns the node value. Only works if the Xml node is not an Element or a Document.
 	**/
-	var nodeValue(getNodeValue,setNodeValue) : String;
-	private function getNodeValue() : String;
-	private function setNodeValue( name : String ) : String;
+	var nodeValue(get,set) : String;
 
 	/**
 		Get the given attribute of an Element node. Returns [null] if not found.
@@ -163,7 +155,7 @@ extern class Xml {
 	function exists( att : String ) : Bool;
 
 	/**
-		Returns an [Iterator] on all the attributes values.
+		Returns an [Iterator] on all the attribute names.
 	**/
 	function attributes() : Iterator<String>;
 
@@ -171,8 +163,7 @@ extern class Xml {
 		Returns the parent object in the Xml hierarchy.
 		The parent can be [null], an Element or a Document.
 	**/
-	var parent(getParent,null) : Xml;
-	private function getParent() : Xml;
+	var parent(get,null) : Xml;
 
 	/**
 		Returns an iterator of all child nodes.

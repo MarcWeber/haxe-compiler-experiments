@@ -1,41 +1,31 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe;
 
-#if neko
-import neko.net.Host;
-import neko.net.Socket;
-#elseif cpp
-import cpp.net.Host;
-import cpp.net.Socket;
-#elseif php
-import php.net.Host;
-import php.net.Socket;
-#end
+#if sys
 
-#if (neko || php || cpp)
+import sys.net.Host;
+import sys.net.Socket;
+
 private typedef AbstractSocket = {
 	var input(default,null) : haxe.io.Input;
 	var output(default,null) : haxe.io.Output;
@@ -45,15 +35,30 @@ private typedef AbstractSocket = {
 	function close() : Void;
 	function shutdown( read : Bool, write : Bool ) : Void;
 }
+
 #end
 
+/**
+	This class can be used to handle Http requests consistently across
+	platforms. There are two intended usages:
+	- call haxe.Http.requestUrl(url) and receive the result as a String (not
+		available on flash)
+	- create a new haxe.Http(url), register your callbacks for onData, onError
+		and onStatus, then call request().
+**/
 class Http {
 
+	/**
+		The url of [this] request. It is used only by the request() method and
+		can be changed in order to send the same request to different target
+		Urls.
+	**/
 	public var url : String;
-#if (neko || php || cpp)
+	public var responseData(default, null) : Null<String>;
+#if sys
 	public var noShutdown : Bool;
 	public var cnxTimeout : Float;
-	public var responseHeaders : Hash<String>;
+	public var responseHeaders : haxe.ds.StringMap<String>;
 	var chunk_size : Null<Int>;
 	var chunk_buf : haxe.io.Bytes;
 	var file : { param : String, filename : String, io : haxe.io.Input, size : Int };
@@ -61,24 +66,31 @@ class Http {
 	public var async : Bool;
 #end
 	var postData : String;
-	var headers : Hash<String>;
-	var params : Hash<String>;
+	var headers : haxe.ds.StringMap<String>;
+	var params : haxe.ds.StringMap<String>;
 
-	#if (neko || php || cpp)
+	#if sys
 	public static var PROXY : { host : String, port : Int, auth : { user : String, pass : String } } = null;
 	#end
 
 	/**
-	 * In PHP Https (SSL) connections are allowed only if the OpenSSL extension is enabled.
-	 * @param	url
-	 */
+		Creates a new Http instance with [url] as parameter.
+
+		This does not do a request until request() is called.
+
+		If [url] is null, the field url must be set to a value before making the
+		call to request(), or the result is unspecified.
+
+		(Php) Https (SSL) connections are allowed only if the OpenSSL extension
+		is enabled.
+	**/
 	public function new( url : String ) {
 		this.url = url;
-		headers = new Hash();
-		params = new Hash();
+		headers = new haxe.ds.StringMap();
+		params = new haxe.ds.StringMap();
 		#if js
 		async = true;
-		#elseif (neko || php || cpp)
+		#elseif sys
 		cnxTimeout = 10;
 		#end
 		#if php
@@ -86,26 +98,70 @@ class Http {
 		#end
 	}
 
-	public function setHeader( header : String, value : String ) {
-		headers.set(header,value);
+	/**
+		Sets the header identified as [header] to value [value].
+
+		If [header] or [value] are null, the result is unspecified.
+
+		This method provides a fluent interface.
+	**/
+	public function setHeader( header : String, value : String ):Http {
+		headers.set(header, value);
+		return this;
 	}
 
-	public function setParameter( param : String, value : String ) {
-		params.set(param,value);
+	/**
+		Sets the parameter identified as [param] to value [value].
+
+		If [header] or [value] are null, the result is unspecified.
+
+		This method provides a fluent interface.
+	**/
+	public function setParameter( param : String, value : String ):Http {
+		params.set(param, value);
+		return this;
 	}
 
-	public function setPostData( data : String ) {
-		#if (flash && !flash9)
-		throw "Not available";
-		#end
+	#if !flash8
+	/**
+		Sets the post data of [this] Http request to [data].
+
+		There can only be one post data per request. Subsequent calls overwrite
+		the previously set value.
+
+		If [data] is null, the post data is considered to be absent.
+
+		This method provides a fluent interface.
+	**/
+	public function setPostData( data : String ):Http {
 		postData = data;
+		return this;
 	}
+	#end
 
-	public function request( post : Bool ) : Void {
+	/**
+		Sends [this] Http request to the Url specified by [this].url.
+
+		If [post] is true, the request is sent as POST request, otherwise it is
+		sent as GET request.
+
+		Depending on the outcome of the request, this method calls the
+		onStatus(), onError() or onData() callback functions.
+
+		If [this].url is null, the result is unspecified.
+
+		If [this].url is an invalid or inaccessible Url, the onError() callback
+		function is called.
+
+		(Js) If [this].async is false, the callback functions are called before
+		this method returns.
+	**/
+	public function request( ?post : Bool ) : Void {
 		var me = this;
 	#if js
-		var r = new js.XMLHttpRequest();
-		var onreadystatechange = function() {
+		me.responseData = null;
+		var r = js.Browser.createXMLHttpRequest();
+		var onreadystatechange = function(_) {
 			if( r.readyState != 4 )
 				return;
 			var s = try r.status catch( e : Dynamic ) null;
@@ -114,15 +170,16 @@ class Http {
 			if( s != null )
 				me.onStatus(s);
 			if( s != null && s >= 200 && s < 400 )
-				me.onData(r.responseText);
+				me.onData(me.responseData = r.responseText);
+			else if ( s == null )
+				me.onError("Failed to connect or resolve host")
 			else switch( s ) {
-			case null:
-				me.onError("Failed to connect or resolve host");
 			case 12029:
 				me.onError("Failed to connect to host");
 			case 12007:
 				me.onError("Unknown host");
 			default:
+				me.responseData = r.responseText;
 				me.onError("Http Error #"+r.status);
 			}
 		};
@@ -136,7 +193,7 @@ class Http {
 				uri = "";
 			else
 				uri += "&";
-			uri += StringTools.urlDecode(p)+"="+StringTools.urlEncode(params.get(p));
+			uri += StringTools.urlEncode(p)+"="+StringTools.urlEncode(params.get(p));
 		}
 		try {
 			if( post )
@@ -158,10 +215,12 @@ class Http {
 			r.setRequestHeader(h,headers.get(h));
 		r.send(uri);
 		if( !async )
-			onreadystatechange();
+			onreadystatechange(null);
 	#elseif flash9
+		me.responseData = null;
 		var loader = new flash.net.URLLoader();
-		loader.addEventListener( "complete", function(e){
+		loader.addEventListener( "complete", function(e) {
+			me.responseData = loader.data;
 			me.onData( loader.data );
 		});
 		loader.addEventListener( "httpStatus", function(e:flash.events.HTTPStatusEvent){
@@ -169,7 +228,8 @@ class Http {
 			if( e.status != 0 )
 				me.onStatus( e.status );
 		});
-		loader.addEventListener( "ioError", function(e:flash.events.IOErrorEvent){
+		loader.addEventListener( "ioError", function(e:flash.events.IOErrorEvent) {
+			me.responseData = loader.data;
 			me.onError(e.text);
 		});
 		loader.addEventListener( "securityError", function(e:flash.events.SecurityErrorEvent){
@@ -212,6 +272,7 @@ class Http {
 			onError("Exception: "+Std.string(e));
 		}
 	#elseif flash
+		me.responseData = null;
 		var r = new flash.LoadVars();
 		// on Firefox 1.5, onData is not called if host/port invalid (!)
 		r.onData = function(data) {
@@ -219,6 +280,7 @@ class Http {
 				me.onError("Failed to retrieve url");
 				return;
 			}
+			me.responseData = data;
 			me.onData(data);
 		};
 		#if flash8
@@ -247,32 +309,38 @@ class Http {
 		}
 		if( !r.sendAndLoad(small_url,r,if( param ) { if( post ) "POST" else "GET"; } else null) )
 			onError("Failed to initialize Connection");
-	#elseif (neko || php || cpp)
+	#elseif sys
 		var me = this;
 		var output = new haxe.io.BytesOutput();
 		var old = onError;
 		var err = false;
 		onError = function(e) {
+			#if neko
+			me.responseData = neko.Lib.stringReference(output.getBytes());
+			#else
+			me.responseData = output.getBytes().toString();
+			#end
 			err = true;
 			old(e);
 		}
 		customRequest(post,output);
 		if( !err )
 		#if neko
-			me.onData(neko.Lib.stringReference(output.getBytes()));
+			me.onData(me.responseData = neko.Lib.stringReference(output.getBytes()));
 		#else
-			me.onData(output.getBytes().toString());
+			me.onData(me.responseData = output.getBytes().toString());
 		#end
 	#end
 	}
 
-#if (neko || php || cpp)
+#if sys
 
 	public function fileTransfert( argname : String, filename : String, file : haxe.io.Input, size : Int ) {
 		this.file = { param : argname, filename : filename, io : file, size : size };
 	}
 
 	public function customRequest( post : Bool, api : haxe.io.Output, ?sock : AbstractSocket, ?method : String  ) {
+		this.responseData = null;
 		var url_regexp = ~/^(https?:\/\/)?([a-zA-Z\.0-9-]+)(:[0-9]+)?(.*)$/;
 		if( !url_regexp.match(url) ) {
 			onError("Invalid URL");
@@ -282,7 +350,7 @@ class Http {
 		if( sock == null ) {
 			if( secure ) {
 				#if php
-				sock = Socket.newSslSocket();
+				sock = new php.net.SslSocket();
 				#elseif hxssl
 				sock = new neko.tls.Socket();
 				#else
@@ -368,7 +436,9 @@ class Http {
 			b.add(uri);
 		}
 		b.add(" HTTP/1.1\r\nHost: "+host+"\r\n");
-		if( postData == null && post && uri != null ) {
+		if( postData != null )
+			b.add("Content-Length: "+postData.length+"\r\n");
+		else if( post && uri != null ) {
 			if( multipart || headers.get("Content-Type") == null ) {
 				b.add("Content-Type: ");
 				if( multipart ) {
@@ -390,13 +460,11 @@ class Http {
 			b.add(headers.get(h));
 			b.add("\r\n");
 		}
+		b.add("\r\n");
 		if( postData != null)
 			b.add(postData);
-		else {
-			b.add("\r\n");
-			if( post && uri != null )
-				b.add(uri);
-		}
+		else if( post && uri != null )
+			b.add(uri);
 		try {
 			if( Http.PROXY != null )
 				sock.connect(new Host(Http.PROXY.host),Http.PROXY.port);
@@ -505,20 +573,25 @@ class Http {
 		// remove the two lasts \r\n\r\n
 		headers.pop();
 		headers.pop();
-		responseHeaders = new Hash();
+		responseHeaders = new haxe.ds.StringMap();
 		var size = null;
+		var chunked = false;
 		for( hline in headers ) {
 			var a = hline.split(": ");
 			var hname = a.shift();
 			var hval = if( a.length == 1 ) a[0] else a.join(": ");
-			responseHeaders.set(hname,hval);
-			if( hname.toLowerCase() == "content-length" )
-				size = Std.parseInt(hval);
+			responseHeaders.set(hname, hval);
+			switch(hname.toLowerCase())
+			{
+				case "content-length":
+					size = Std.parseInt(hval);
+				case "transfer-encoding":
+					chunked = (hval.toLowerCase() == "chunked");
+			}
 		}
 
 		onStatus(status);
 
-		var chunked = responseHeaders.get("Transfer-Encoding") == "chunked";
 		var chunk_re = ~/^([0-9A-Fa-f]+)[ ]*\r\n/m;
 		chunk_size = null;
 		chunk_buf = null;
@@ -621,16 +694,45 @@ class Http {
 
 #end
 
+	/**
+		This method is called upon a successful request, with [data] containing
+		the result String.
+
+		The intended usage is to bind it to a custom function:
+			httpInstance.onData = function(data) { // handle result }
+	**/
 	public dynamic function onData( data : String ) {
 	}
 
+	/**
+		This method is called upon a request error, with [msg] containing the
+		error description.
+
+		The intended usage is to bind it to a custom function:
+			httpInstance.onError = function(msg) { // handle error }
+	**/
 	public dynamic function onError( msg : String ) {
 	}
 
+	/**
+		This method is called upon a Http status change, with [status] being the
+		new status.
+
+		The intended usage is to bind it to a custom function:
+			httpInstance.onStatus = function(status) { // handle status }
+	**/
 	public dynamic function onStatus( status : Int ) {
 	}
 
 #if !flash
+	/**
+		Makes a synchronous request to [url].
+
+		This creates a new Http instance and makes a GET request by calling its
+		request(false) method.
+
+		If [url] is null, the result is unspecified.
+	**/
 	public static function requestUrl( url : String ) : String {
 		var h = new Http(url);
 	#if js

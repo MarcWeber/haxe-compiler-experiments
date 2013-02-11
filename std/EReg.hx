@@ -1,87 +1,157 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 /**
-	Regular expressions are a way to find regular patterns into
-	Strings. Have a look at the tutorial on haXe website to learn
-	how to use them.
+	The EReg class represents regular expressions.
+	
+	While basic usage and patterns consistently work across platforms, some more
+	complex operations may yield different results. This is a necessary trade-
+	off to retain a certain level of performance.
+	
+	EReg instances can be created by calling the constructor, or with the
+	special syntax ~/pattern/modifier
+	
+	EReg instances maintain an internal state, which is affected by several of
+	its methods.
+	
+	A detailed explanation of the supported operations is available at
+	http://haxe.org/doc/cross/regexp
 **/
 class EReg {
 
 	/**
-		Creates a new regular expression with pattern [r] and
-		options [opt].
+		Creates a new regular expression with pattern [r] and modifiers [opt].
+		
+		This is equivalent to the shorthand syntax ~/r/opt
+		
+		If [r] or [opt] are null, the result is unspecified.
 	**/
 	public function new( r : String, opt : String ) {
 		throw "Regular expressions are not implemented for this platform";
 	}
 
 	/**
-		Tells if the regular expression matches the String.
-		Updates the internal state accordingly.
+		Tells if [this] regular expression matches String [s].
+		
+		This method modifies the internal state.
+		
+		If [s] is null, the result is unspecified.
 	**/
 	public function match( s : String ) : Bool {
 		return false;
 	}
 
 	/**
-		Returns a matched group or throw an expection if there
-		is no such group. If [n = 0], the whole matched substring
-		is returned.
+		Returns the matched sub-group [n] of [this] EReg.
+		
+		This method should only be called after [this].match() or
+		[this].matchSub(), and then operates on the String of that operation.
+		
+		The index [n] corresponds to the n-th set of parentheses in the pattern
+		of [this] EReg. If no such sub-group exists, an exception is thrown.
+		
+		If [n] equals 0, the whole matched substring is returned.
 	**/
 	public function matched( n : Int ) : String {
 		return null;
 	}
 
 	/**
-		Returns the part of the string that was as the left of
-		of the matched substring.
+		Returns the part to the left of the last matched substring.
+		
+		If the most recent call to [this].match() or [this].matchSub() did not
+		match anything, the result is unspecified.
+		
+		If the global g modifier was in place for the matching, only the
+		substring to the left of the leftmost match is returned.
+		
+		The result does not include the matched part.
 	**/
 	public function matchedLeft() : String {
 		return null;
 	}
 
 	/**
-		Returns the part of the string that was at the right of
-		of the matched substring.
+		Returns the part to the right of the last matched substring.
+		
+		If the most recent call to [this].match() or [this].matchSub() did not
+		match anything, the result is unspecified.
+		
+		If the global g modifier was in place for the matching, only the
+		substring to the right of the leftmost match is returned.
+		
+		The result does not include the matched part.
 	**/
 	public function matchedRight() : String {
 		return null;
 	}
 
 	/**
-		Returns the position of the matched substring within the
-		original matched string.
+		Returns the position and length of the last matched substring, within
+		the String which was last used as argument to [this].match() or
+		[this].matchSub().
+		
+		If the most recent call to [this].match() or [this].matchSub() did not
+		match anything, the result is unspecified.
+		
+		If the global g modifier was in place for the matching, the position and
+		length of the leftmost substring is returned.
 	**/
 	public function matchedPos() : { pos : Int, len : Int } {
 		return null;
 	}
 
 	/**
-		Split a string by using the regular expression to match
-		the separators.
+		Tells if [this] regular expression matches a substring of String [s].
+		
+		This function expects [pos] and [len] to describe a valid substring of
+		[s], or else the result is unspecified. To get more robust behavior,
+		[this].matchSub(s.substr(pos,len)) can be used instead.
+		
+		This method modifies the internal state.
+		
+		If [s] is null, the result is unspecified.
+	**/
+	public function matchSub( s : String, pos : Int, len : Int = 0):Bool {
+		return false;
+	}
+
+	/**
+		Splits String [s] at all substrings [this] EReg matches.
+		
+		If a match is found at the start of [s], the result contains a leading
+		empty String "" entry.
+		
+		If a match is found at the end of [s], the result contains a trailing
+		empty String "" entry.
+		
+		If two matching substrings appear next to each other, the result
+		contains the empty String "" between them.
+		
+		By default, this method splits [s] into two parts at the first matched
+		substring. If the global g modifier is in place, [s] is split at each
+		matched substring.
+		
+		If [s] is null, the result is unspecified.
 	**/
 	public function split( s : String ) : Array<String> {
 		return null;
@@ -101,7 +171,7 @@ class EReg {
 		can return the string that needs to be replaced. All occurences are matched anyway,
 		and setting the [g] flag might cause some incorrect behavior on some platforms.
 	**/
-	public function customReplace( s : String, f : EReg -> String ) : String {
+	public function map( s : String, f : EReg -> String ) : String {
 		var buf = new StringBuf();
 		while( true ) {
 			if( !match(s) )
@@ -113,5 +183,4 @@ class EReg {
 		buf.add(s);
 		return buf.toString();
 	}
-
 }

@@ -1,31 +1,28 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.remoting;
 import haxe.remoting.SocketProtocol.Socket;
 
-class SocketConnection implements AsyncConnection, implements Dynamic<AsyncConnection> {
+class SocketConnection implements AsyncConnection implements Dynamic<AsyncConnection> {
 
 	var __path : Array<String>;
 	var __data : {
@@ -35,7 +32,8 @@ class SocketConnection implements AsyncConnection, implements Dynamic<AsyncConne
 		error : Dynamic -> Void,
 		#if !flash9
 		#if (flash || js)
-		queue : haxe.TimerQueue,
+		queue : Array<Void -> Void>,
+		timer : haxe.Timer,
 		#end
 		#end
 	};
@@ -131,7 +129,8 @@ class SocketConnection implements AsyncConnection, implements Dynamic<AsyncConne
 			log : null,
 			#if !flash9
 			#if (flash || js)
-			queue : new haxe.TimerQueue(),
+			queue : [],
+			timer : null,
 			#end
 			#end
 		};
@@ -154,7 +153,7 @@ class SocketConnection implements AsyncConnection, implements Dynamic<AsyncConne
 		// where a new onData is called is a parallel thread
 		// ...with the buffer of the previous onData (!)
 		s.onData = function( data : String ) {
-			sc.__data.queue.add(function() {
+			sc.__data.queue.push(function() {
 				var msgLen = sc.__data.protocol.messageLength(data.charCodeAt(0),data.charCodeAt(1));
 				if( msgLen == null || data.length != msgLen - 1 ) {
 					sc.__data.error("Invalid message header");
@@ -162,6 +161,18 @@ class SocketConnection implements AsyncConnection, implements Dynamic<AsyncConne
 				}
 				sc.processMessage(data.substr(2,data.length-2));
 			});
+			if( sc.__data.timer == null ) {
+				sc.__data.timer = new haxe.Timer(1);
+				sc.__data.timer.run = function() {
+					var q = sc.__data.queue.shift();
+					if( q == null ) {
+						sc.__data.timer.stop();
+						sc.__data.timer = null;
+						return;
+					}
+					q();
+				};
+			}
 		};
 		#end
 		return sc;

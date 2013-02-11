@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe;
 
@@ -45,6 +42,13 @@ private typedef ExprToken = {
 	var p : String;
 }
 
+/**
+	Template provides a basic templating mechanism to replace values in a source
+	String, and to have some basic logic.
+	
+	A complete documentation of the supported syntax is available at:
+	http://haxe.org/doc/cross/template
+**/
 class Template {
 
 	static var splitter = ~/(::[A-Za-z0-9_ ()&|!+=\/><*."-]+::|\$\$([A-Za-z0-9_-]+)\()/;
@@ -53,6 +57,10 @@ class Template {
 	static var expr_int = ~/^[0-9]+$/;
 	static var expr_float = ~/^([+-]?)(?=\d|,\d)\d*(,\d*)?([Ee]([+-]?\d+))?$/;
 
+	/**
+		Global replacements which are used across all Template instances. This
+		has lower priority than the context argument of execute().
+	**/
 	public static var globals : Dynamic = {};
 
 	var expr : TemplateExpr;
@@ -61,6 +69,16 @@ class Template {
 	var stack : List<Dynamic>;
 	var buf : StringBuf;
 
+	/**
+		Creates a new Template instance from [str].
+		
+		[str] is parsed into tokens, which are stored for internal use. This
+		means that multiple execute() operations on a single Template instance
+		are more efficient than one execute() operations on multiple Template
+		instances.
+		
+		If [str] is null, the result is unspecified.
+	**/
 	public function new( str : String ) {
 		var tokens = parseTokens(str);
 		expr = parseBlock(tokens);
@@ -68,7 +86,23 @@ class Template {
 			throw "Unexpected '"+tokens.first().s+"'";
 	}
 
-	public function execute( context : Dynamic, ?macros : Dynamic ) {
+	/**
+		Executes [this] Template, taking into account [context] for
+		replacements and [macros] for callback functions.
+		
+		If [context] has a field 'name', its value replaces all occurrences of
+		::name:: in the Template. Otherwise Template.globals is checked instead,
+		If 'name' is not a field of that either, ::name:: is replaced with null.
+		
+		If [macros] has a field 'name', all occurrences of $$name(args) are
+		replaced with the result of calling that field. The first argument is
+		always the the resolve() method, followed by the given arguments.
+		If [macros] has no such field, the result is unspecified.
+		
+		If [context] is null, the result is unspecified. If [macros] is null,
+		no macros are used.
+	**/
+	public function execute( context : Dynamic, ?macros : Dynamic ):String {
 		this.macros = if( macros == null ) {} else macros;
 		this.context = context;
 		stack = new List();
@@ -265,13 +299,13 @@ class Template {
 			return makeConst(p.p);
 		switch( p.p ) {
 		case "(":
-			var e1 = makeExpr(l);
+			var e1:Dynamic = makeExpr(l);
 			var p = l.pop();
 			if( p == null || p.s )
 				throw p.p;
 			if( p.p == ")" )
 				return e1;
-			var e2 = makeExpr(l);
+			var e2:Dynamic = makeExpr(l);
 			var p2 = l.pop();
 			if( p2 == null || p2.p != ")" )
 				throw p2.p;
@@ -323,11 +357,11 @@ class Template {
 		case OpForeach(e,loop):
 			var v : Dynamic = e();
 			try {
-				if( v.hasNext == null ) {
-					var x : Dynamic = v.iterator();
-					if( x.hasNext == null ) throw null;
-					v = x;
-				}
+				var x : Dynamic = v.iterator();
+				if( x.hasNext == null ) throw null;
+				v = x;
+			} catch( e : Dynamic ) try {
+				if( v.hasNext == null ) throw null;
 			} catch( e : Dynamic ) {
 				throw "Cannot iter on " + v;
 			}

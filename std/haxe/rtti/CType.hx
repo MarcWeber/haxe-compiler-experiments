@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005-2009, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.rtti;
 
@@ -34,8 +31,9 @@ enum CType {
 	CClass( name : Path, params : List<CType> );
 	CTypedef( name : Path, params : List<CType> );
 	CFunction( args : List<{ name : String, opt : Bool, t : CType }>, ret : CType );
-	CAnonymous( fields : List<{ name : String, t : CType  }> );
+	CAnonymous( fields : List<ClassField> );
 	CDynamic( ?t : CType );
+	CAbstract( name : Path, params : List<CType> );
 }
 
 typedef PathParams = {
@@ -54,6 +52,8 @@ enum Rights {
 	RInline;
 }
 
+typedef MetaData = Array<{ name : String, params : Array<String> }>;
+
 typedef ClassField = {
 	var name : String;
 	var type : CType;
@@ -64,15 +64,19 @@ typedef ClassField = {
 	var set : Rights;
 	var params : TypeParams;
 	var platforms : Platforms;
+	var meta : MetaData;
+	var line : Null<Int>;
 }
 
 typedef TypeInfos = {
 	var path : Path;
 	var module : Path;
+	var file : Null<String>;
 	var params : TypeParams;
 	var doc : String;
 	var isPrivate : Bool;
 	var platforms : Platforms;
+	var meta : MetaData;
 }
 
 typedef Classdef = {> TypeInfos,
@@ -90,6 +94,7 @@ typedef EnumField = {
 	var args : Null<List<{ name : String, opt : Bool, t : CType }>>;
 	var doc : String;
 	var platforms : Platforms;
+	var meta : MetaData;
 }
 
 typedef Enumdef = {> TypeInfos,
@@ -99,7 +104,12 @@ typedef Enumdef = {> TypeInfos,
 
 typedef Typedef = {> TypeInfos,
 	var type : CType;
-	var types : Hash<CType>; // by platform
+	var types : haxe.ds.StringMap<CType>; // by platform
+}
+
+typedef Abstractdef = {> TypeInfos,
+	var subs : Array<CType>;
+	var supers : Array<CType>;
 }
 
 enum TypeTree {
@@ -107,6 +117,7 @@ enum TypeTree {
 	TClassdecl( c : Classdef );
 	TEnumdecl( e : Enumdef );
 	TTypedecl( t : Typedef );
+	TAbstractdecl( a : Abstractdef );
 }
 
 typedef TypeRoot = Array<TypeTree>
@@ -119,6 +130,7 @@ class TypeApi {
 		case TClassdecl(c): inf = c;
 		case TEnumdecl(e): inf = e;
 		case TTypedecl(t): inf = t;
+		case TAbstractdecl(a): inf = a;
 		case TPackage(_,_,_): throw "Unexpected Package";
 		}
 		return inf;
@@ -175,6 +187,12 @@ class TypeApi {
 				return name == name2 && leq(typeEq,params,params2);
 			default:
 			}
+		case CAbstract(name,params):
+			switch( t2 ) {
+			case CAbstract(name2,params2):
+				return name == name2 && leq(typeEq,params,params2);
+			default:
+			}
 		case CTypedef(name,params):
 			switch( t2 ) {
 			case CTypedef(name2,params2):
@@ -192,9 +210,7 @@ class TypeApi {
 		case CAnonymous(fields):
 			switch( t2 ) {
 			case CAnonymous(fields2):
-				return leq(function(a,b) {
-					return a.name == b.name && typeEq(a.t,b.t);
-				},fields,fields2);
+				return leq(function(a,b) return fieldEq(a,b),fields,fields2);
 			default:
 			}
 		case CDynamic(t):

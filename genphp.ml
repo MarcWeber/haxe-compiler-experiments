@@ -1,22 +1,25 @@
 (*
- *  haXe/PHP Compiler
- *  Copyright (c)2008 Franco Ponticelli
- *  based on and including code by (c)2005-2008 Nicolas Cannasse
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *)
+
 open Ast
 open Type
 open Common
@@ -86,7 +89,7 @@ let rec class_string klass suffix params =
 	(* Array class *)
 	|  ([],"Array") -> (snd klass.cl_path) ^ suffix ^ "<" ^ (String.concat ","
 					 (List.map type_string  params) ) ^ " >"
-	| _ when klass.cl_kind=KTypeParameter -> "Dynamic"
+	| _ when (match klass.cl_kind with KTypeParameter _ -> true | _ -> false) -> "Dynamic"
 	|  ([],"#Int") -> "/* # */int"
 	|  (["haxe";"io"],"Unsigned_char__") -> "unsigned char"
 	|  ([],"Class") -> "Class"
@@ -104,12 +107,17 @@ let rec class_string klass suffix params =
 and type_string_suff suffix haxe_type =
 	(match haxe_type with
 	| TMono r -> (match !r with None -> "Dynamic" | Some t -> type_string_suff suffix t)
+	| TAbstract ({ a_path = [],"Int" },[]) -> "int"
+	| TAbstract ({ a_path = [],"Float" },[]) -> "double"
+	| TAbstract ({ a_path = [],"Bool" },[]) -> "bool"
+	| TAbstract ({ a_path = [],"Void" },[]) -> "Void"
 	| TEnum ({ e_path = ([],"Void") },[]) -> "Void"
 	| TEnum ({ e_path = ([],"Bool") },[]) -> "bool"
 	| TInst ({ cl_path = ([],"Float") },[]) -> "double"
 	| TInst ({ cl_path = ([],"Int") },[]) -> "int"
 	| TEnum (enum,params) ->  (join_class_path enum.e_path "::") ^ suffix
 	| TInst (klass,params) ->  (class_string klass suffix params)
+	| TAbstract (abs,params) ->  (join_class_path abs.a_path "::") ^ suffix
 	| TType (type_def,params) ->
 		(match type_def.t_path with
 		| [] , "Null" ->
@@ -136,7 +144,7 @@ and type_string haxe_type =
 	type_string_suff "" haxe_type;;
 
 let debug_expression expression type_too =
-	"/* " ^ Type.s_expr_kind expression ^ (if (type_too) then " = " ^ (type_string expression.etype) else "") ^ " */";;
+	"/* " ^ Type.s_expr_kind expression ^ (if (type_too) then " = " ^ (type_string (follow expression.etype)) else "") ^ " */";;
 
 let rec register_extern_required_path ctx path =
 	if (List.exists(fun p -> p = path) ctx.extern_classes_with_init) && not (List.exists(fun p -> p = path) ctx.extern_required_paths) then
@@ -145,10 +153,16 @@ let rec register_extern_required_path ctx path =
 let s_expr_expr = Type.s_expr_kind
 
 let s_expr_name e =
-	s_type (print_context()) e.etype
+	s_type (print_context()) (follow e.etype)
 
 let s_type_name t =
 	s_type (print_context()) t
+
+
+
+and start_with s test =
+	let len = String.length test in
+	(String.length s > len && String.sub s 0 len = test)
 
 let rec is_uncertain_type t =
 	match follow t with
@@ -198,18 +212,46 @@ let rec is_string_type t =
 
 let is_string_expr e = is_string_type e.etype
 
+let to_string ctx e =
+	let v = alloc_var "__call__" t_dynamic in
+	let f = mk (TLocal v) t_dynamic e.epos in
+	mk (TCall (f, [ Codegen.string ctx.com "_hx_string_rec" e.epos; e; Codegen.string ctx.com "" e.epos])) ctx.com.basic.tstring e.epos
+
+let as_string_expr ctx e =
+	match e.eexpr with
+	| TConst (TNull) ->
+		to_string ctx e
+	| _ when not (is_string_expr e) ->
+		to_string ctx e
+	| _ -> e
+(* for known String type that could have null value *)
+let to_string_null ctx e = 
+	let v = alloc_var "__call__" t_dynamic in
+	let f = mk (TLocal v) t_dynamic e.epos in
+	mk (TCall (f, [ Codegen.string ctx.com "_hx_string_or_null" e.epos; e])) ctx.com.basic.tstring e.epos
+	
+	
+let as_string_expr ctx e =	match e.eexpr with
+	| TConst (TNull) ->  to_string ctx e
+	| TConst (TString s) -> e
+	| TBinop (op,_,_) when (is_string_expr e)-> e
+	| TCall ({eexpr = TField({eexpr = TTypeExpr(TClassDecl {cl_path = ([],"Std")})},FStatic(c,f) )}, [_]) when (f.cf_name="string") -> e
+	| TCall ({eexpr = TLocal _}, [{eexpr = TConst (TString ("_hx_string_rec" | "_hx_str_or_null"))}]) -> e
+	| _ when not (is_string_expr e) -> to_string ctx e
+	| _ -> to_string_null ctx e
+
 let spr ctx s = Buffer.add_string ctx.buf s
 let print ctx = Printf.kprintf (fun s -> Buffer.add_string ctx.buf s)
 
 (*--php-prefix - added by skial bainn*)
-let prefix_class com name = 
+let prefix_class com name =
 	match com.php_prefix with
-	| Some prefix_class (* when not (String.length name <= 2 || String.sub name 0 2 = "__") *) -> 
+	| Some prefix_class (* when not (String.length name <= 2 || String.sub name 0 2 = "__") *) ->
 		prefix_class ^ name
 	| _ ->
 		name
 
-let prefix_init_replace com code = 
+let prefix_init_replace com code =
 	let r = Str.regexp "php_Boot" in
 	Str.global_replace r ("php_" ^ (prefix_class com "Boot")) code
 
@@ -241,12 +283,25 @@ let s_path_haxe path =
 	| [], s -> s
 	| el, s -> String.concat "." el ^ "." ^ s
 
-let s_ident n =
-	let suf = "h" in
+let escape_bin s =
+	let b = Buffer.create 0 in
+	for i = 0 to String.length s - 1 do
+		match Char.code (String.unsafe_get s i) with
+		| c when c = Char.code('\\') or c = Char.code('"') or c = Char.code('$') ->
+			Buffer.add_string b "\\";
+			Buffer.add_char b (Char.chr c)
+		| c when c < 32 ->
+			Buffer.add_string b (Printf.sprintf "\\x%.2X" c)
+		| c ->
+			Buffer.add_char b (Char.chr c)
+	done;
+	Buffer.contents b
+
 (*
 haxe reserved words that match php ones: break, case, class, continue, default, do, else, extends, for, function, if, new, return, static, switch, var, while, interface, implements, public, private, try, catch, throw
  *)
 (* PHP only (for future use): cfunction, old_function *)
+let is_keyword n = 
 	match String.lowercase n with
 	| "and" | "or" | "xor" | "__file__" | "exception" | "__line__" | "array"
 	| "as" | "const" | "declare" | "die" | "echo"| "elseif" | "empty"
@@ -255,8 +310,15 @@ haxe reserved words that match php ones: break, case, class, continue, default, 
 	| "include_once" | "isset" | "list" | "namespace" | "print" | "require" | "require_once"
 	| "unset" | "use" | "__function__" | "__class__" | "__method__" | "final"
 	| "php_user_filter" | "protected" | "abstract" | "__set" | "__get" | "__call"
-	| "clone" -> suf ^ n
-	| _ -> n
+	| "clone" | "instanceof" -> true
+	| _ -> false
+
+let s_ident n =
+	let suf = "h" in
+	if (is_keyword n) then (suf ^ n) else n
+
+let s_ident_field n =
+	if (is_keyword n) then ("{\"" ^ (escape_bin n) ^ "\"}") else n
 
 let s_ident_local n =
 	let suf = "h" in
@@ -285,7 +347,7 @@ let write_resource dir name data =
 	close_out ch
 
 let stack_init com use_add =
-	Codegen.stack_context_init com "GLOBALS['%s']" "GLOBALS['%e']" "»spos" "»tmp" use_add null_pos
+	Codegen.stack_context_init com "GLOBALS['%s']" "GLOBALS['%e']" "__hx__spos" "tmp" use_add null_pos
 
 let init com cwd path def_type =
 	let rec create acc = function
@@ -302,7 +364,7 @@ let init com cwd path def_type =
 		| [], "List" -> "HList";
 		| _, s -> s) in
 	(*--php-prefix*)
-	let ch = open_out_bin (String.concat "/" dir ^ "/" ^ (filename path) ^ (if def_type = 0 then ".class" else if def_type = 1 then ".enum"  else if def_type = 2 then ".interface" else ".extern") ^ ".php") in
+	let ch = open_out (String.concat "/" dir ^ "/" ^ (filename path) ^ (if def_type = 0 then ".class" else if def_type = 1 then ".enum"  else if def_type = 2 then ".interface" else ".extern") ^ ".php") in
 	let imports = Hashtbl.create 0 in
 	Hashtbl.add imports (snd path) [fst path];
 	{
@@ -399,21 +461,7 @@ let define_local ctx l =
 	loop 1
 
 let this ctx =
-	if ctx.in_value <> None then "$»this" else "$this"
-
-let escape_bin s =
-	let b = Buffer.create 0 in
-	for i = 0 to String.length s - 1 do
-		match Char.code (String.unsafe_get s i) with
-		| c when c = Char.code('\\') or c = Char.code('"') or c = Char.code('$') ->
-			Buffer.add_string b "\\";
-			Buffer.add_char b (Char.chr c)
-		| c when c < 32 ->
-			Buffer.add_string b (Printf.sprintf "\\x%.2X" c)
-		| c ->
-			Buffer.add_char b (Char.chr c)
-	done;
-	Buffer.contents b
+	if ctx.in_value <> None then "$__hx__this" else "$this"
 
 let gen_constant ctx p = function
 	| TInt i -> print ctx "%ld" i
@@ -425,10 +473,20 @@ let gen_constant ctx p = function
 	| TThis -> spr ctx (this ctx)
 	| TSuper -> spr ctx "ERROR /* unexpected call to super in gen_constant */"
 
-let s_funarg ctx arg t p c =
-	let byref = if (String.length arg > 7 && String.sub arg 0 7 = "byref__") then "&" else "" in
-	print ctx "%s$%s" byref (s_ident_local arg)
+let arg_is_opt c =
+	match c with
+	| Some _ -> true
+	| None -> false
 
+let s_funarg ctx arg t p o =
+	let byref = if (String.length arg > 7 && String.sub arg 0 7 = "byref__") then "&" else "" in
+	print ctx "%s$%s" byref (s_ident_local arg);
+	if o then spr ctx " = null"
+(*
+	match c with
+	| _, Some _ -> spr ctx " = null"
+	| _, None -> ()
+*)
 let is_in_dynamic_methods ctx e s =
 	List.exists (fun dm ->
 		(* TODO: I agree, this is a mess ... but after hours of trials and errors I gave up; maybe in a calmer day *)
@@ -484,11 +542,11 @@ and gen_call ctx e el =
 			concat ctx "," (gen_value ctx) params;
 			spr ctx ")";
 		);
-	| TField ({ eexpr = TConst TSuper },name) , params ->
+	| TField ({ eexpr = TConst TSuper },f) , params ->
 		(match ctx.curclass.cl_super with
 		| None -> assert false
 		| Some (c,_) ->
-			print ctx "parent::%s(" (s_ident name);
+			print ctx "parent::%s(" (s_ident (field_name f));
 			concat ctx "," (gen_value ctx) params;
 			spr ctx ")";
 		);
@@ -516,7 +574,7 @@ and gen_call ctx e el =
 		gen_array_args ctx el;
 	| TLocal { v_name = "__prefix__" }, [] ->
 		(match ctx.com.php_prefix with
-		| Some prefix -> 
+		| Some prefix ->
 			print ctx "\"%s\"" prefix
 		| None ->
 			spr ctx "null")
@@ -613,13 +671,19 @@ and gen_string_static_call ctx s e el =
 	| _ -> unsupported "gen_string_static_call " e.epos;
 
 and could_be_string_call s =
-	s = "substr" || s = "charAt" || s = "charCodeAt" || s = "indexOf" ||
+	s = "substr" || s = "substring" || s = "charAt" || s = "charCodeAt" || s = "indexOf" ||
 	s = "lastIndexOf" || s = "split" || s = "toLowerCase" || s = "toString" || s = "toUpperCase"
 
 and gen_string_call ctx s e el =
 	match s with
 	| "substr" ->
 		spr ctx "_hx_substr(";
+		gen_value ctx e;
+		spr ctx ", ";
+		concat ctx ", " (gen_value ctx) el;
+		spr ctx ")"
+	| "substring" ->
+		spr ctx "_hx_substring(";
 		gen_value ctx e;
 		spr ctx ", ";
 		concat ctx ", " (gen_value ctx) el;
@@ -685,7 +749,7 @@ and gen_field_op ctx e =
 	| TField (f,s) ->
 		(match follow e.etype with
 		| TFun _ ->
-			gen_field_access ctx true f s
+			gen_field_access ctx true f (field_name s)
 		| _ ->
 			gen_value_op ctx e)
 	| _ ->
@@ -709,10 +773,12 @@ and gen_member_access ctx isvar e s =
 	match follow e.etype with
 	| TAnon a ->
 		(match !(a.a_status) with
-		| EnumStatics _
-		| Statics _ -> print ctx "::%s%s" (if isvar then "$" else "") (s_ident s)
-		| _ -> print ctx "->%s" (s_ident s))
-	| _ -> print ctx "->%s" (s_ident s)
+		| EnumStatics _ ->
+			print ctx "::%s%s" (if isvar then "$" else "") s
+		| Statics _ ->
+			print ctx "::%s%s" (if isvar then "$" else "") (s_ident s)
+		| _ -> print ctx "->%s" (s_ident_field s))
+	| _ -> print ctx "->%s" (s_ident_field s)
 
 and gen_field_access ctx isvar e s =
 	match e.eexpr with
@@ -721,7 +787,7 @@ and gen_field_access ctx isvar e s =
 		gen_member_access ctx isvar e s
 	| TLocal _ ->
 		gen_expr ctx e;
-		print ctx "->%s" (s_ident s)
+		print ctx "->%s" (s_ident_field s)
 	| TArray (e1,e2) ->
 		spr ctx "_hx_array_get(";
 		gen_value ctx e1;
@@ -734,6 +800,12 @@ and gen_field_access ctx isvar e s =
 	| TObjectDecl _
 	| TArrayDecl _
 	| TNew _ ->
+		spr ctx "_hx_deref(";
+		ctx.is_call <- false;
+		gen_value ctx e;
+		spr ctx ")";
+		gen_member_access ctx isvar e s
+	| TCast (ec, _) when (match ec.eexpr with | TNew _ | TArrayDecl _ -> true | _ -> false) ->
 		spr ctx "_hx_deref(";
 		ctx.is_call <- false;
 		gen_value ctx e;
@@ -754,7 +826,7 @@ and gen_dynamic_function ctx isstatic name f params p =
 	print ctx "function %s%s(" byref name;
 	concat ctx ", " (fun (v,c) ->
 		let arg = define_local ctx v.v_name in
-		s_funarg ctx arg v.v_type p c;
+		s_funarg ctx arg v.v_type p (arg_is_opt c);
 	) f.tf_args;
 	spr ctx ") {";
 
@@ -793,7 +865,7 @@ and gen_function ctx name f params p =
 	print ctx "function %s%s(" byref name;
 	concat ctx ", " (fun (v,o) ->
 		let arg = define_local ctx v.v_name in
-		s_funarg ctx arg v.v_type p o;
+		s_funarg ctx arg v.v_type p (arg_is_opt o);
 	) f.tf_args;
 	print ctx ") ";
 	gen_expr ctx (fun_block ctx f p);
@@ -870,6 +942,45 @@ and gen_while_expr ctx e =
 	ctx.nested_loops <- old_nested_loops;
 	ctx.in_loop <- old_loop
 
+and gen_tfield ctx e e1 s =
+	match follow e.etype with
+	| TFun (args, _) ->
+		(if ctx.is_call then begin
+			gen_field_access ctx false e1 s
+	  	end else if is_in_dynamic_methods ctx e1 s then begin
+	  		gen_field_access ctx true e1 s;
+	  	end else begin
+			let ob ex =
+				(match ex with
+				| TTypeExpr t ->
+					print ctx "\"";
+					spr ctx (s_path ctx (t_path t) false e1.epos);
+					print ctx "\""
+				| _ ->
+					gen_expr ctx e1) in
+
+			spr ctx "(isset(";
+			gen_field_access ctx true e1 s;
+			spr ctx ") ? ";
+			gen_field_access ctx true e1 s;
+			spr ctx ": array(";
+			ob e1.eexpr;
+			print ctx ", \"%s\"))" (s_ident s);
+
+		end)
+	| TMono _ ->
+		if ctx.is_call then
+			gen_field_access ctx false e1 s
+		else
+			gen_uncertain_string_var ctx s e1
+	| _ ->
+		if is_string_expr e1 then
+			gen_string_var ctx s e1
+		else if is_uncertain_expr e1 then
+			gen_uncertain_string_var ctx s e1
+		else
+			gen_field_access ctx true e1 s
+
 and gen_expr ctx e =
 	let in_block = ctx.in_block in
 	ctx.in_block <- false;
@@ -881,14 +992,18 @@ and gen_expr ctx e =
 		gen_constant ctx e.epos c
 	| TLocal v ->
 		spr ctx ("$" ^ (try PMap.find v.v_name ctx.locals with Not_found -> (s_ident_local v.v_name)))
-	| TEnumField (en,s) ->
-		(match (try PMap.find s en.e_constrs with Not_found -> error ("Unknown local " ^ s) e.epos).ef_type with
-		| TFun (args,_) -> print ctx "%s::%s" (s_path ctx en.e_path en.e_extern e.epos) (s_ident s)
-		| _ -> print ctx "%s::$%s" (s_path ctx en.e_path en.e_extern e.epos) (s_ident s))
 	| TArray (e1,e2) ->
 		(match e1.eexpr with
 		| TCall _
+		| TBlock _
+		| TParenthesis _
 		| TArrayDecl _ ->
+			spr ctx "_hx_array_get(";
+			gen_value ctx e1;
+			spr ctx ", ";
+			gen_value ctx e2;
+			spr ctx ")";
+		| TCast (ec, _) when (match ec.eexpr with | TArrayDecl _  | TBlock _ -> true | _ -> false) ->
 			spr ctx "_hx_array_get(";
 			gen_value ctx e1;
 			spr ctx ", ";
@@ -913,7 +1028,7 @@ and gen_expr ctx e =
 			(match e.eexpr with
 			| TArray(te1, te2) ->
 				gen_value ctx te1;
-				spr ctx "->»a[";
+				spr ctx "->a[";
 				gen_value ctx te2;
 				spr ctx "]";
 			| _ ->
@@ -922,24 +1037,30 @@ and gen_expr ctx e =
 			(match e.eexpr with
 			| TArray(te1, te2) ->
 				gen_value ctx te1;
-				spr ctx "->»a[";
+				spr ctx "->a[";
 				gen_value ctx te2;
 				spr ctx "]";
 			| TField (e1,s) ->
-				gen_field_access ctx true e1 s
+				gen_field_access ctx true e1 (field_name s)
 			| _ ->
 				gen_field_op ctx e1;) in
 		let leftsidef e =
 			(match e.eexpr with
 			| TField (e1,s) ->
-				gen_field_access ctx true e1 s;
+				gen_field_access ctx true e1 (field_name s)
 			| _ ->
 				gen_field_op ctx e1;
 				) in
 		(match op with
+		| Ast.OpMod ->
+			spr ctx "_hx_mod(";
+			gen_value_op ctx e1;
+			spr ctx ", ";
+			gen_value_op ctx e2;
+			spr ctx ")";
 		| Ast.OpAssign ->
 			(match e1.eexpr with
-			| TArray(te1, te2) when (match te1.eexpr with TCall _ -> true | _ -> false) ->
+			| TArray(te1, te2) when (match te1.eexpr with | TCall _ | TParenthesis _ -> true | _ -> false) ->
 				spr ctx "_hx_array_assign(";
 				gen_value ctx te1;
 				spr ctx ", ";
@@ -953,17 +1074,31 @@ and gen_expr ctx e =
 				gen_value_op ctx e2;
 			)
 		| Ast.OpAssignOp(Ast.OpAdd) when (is_uncertain_expr e1 && is_uncertain_expr e2) ->
-			leftside e1;
-			spr ctx " = ";
-			spr ctx "_hx_add(";
-			gen_value_op ctx e1;
-			spr ctx ", ";
-			gen_value_op ctx e2;
-			spr ctx ")";
+			(match e1.eexpr with
+			| TArray(te1, te2) ->
+				let t1 = define_local ctx "__hx__t1" in
+				let t2 = define_local ctx "__hx__t2" in
+
+				print ctx "_hx_array_assign($%s = " t1;
+				gen_value ctx te1;
+				print ctx ", $%s = " t2;
+				gen_value ctx te2;
+				print ctx ", $%s->a[$%s] + " t1 t2;
+				gen_value_op ctx e2;
+				spr ctx ")";
+			| _ ->
+				leftside e1;
+				spr ctx " = ";
+				spr ctx "_hx_add(";
+				gen_value_op ctx e1;
+				spr ctx ", ";
+				gen_value_op ctx e2;
+				spr ctx ")";
+			)
 		| Ast.OpAssignOp(Ast.OpAdd) when (is_string_expr e1 || is_string_expr e2) ->
 			leftside e1;
 			spr ctx " .= ";
-			gen_value_op ctx e2;
+			gen_value_op ctx (as_string_expr ctx e2);
 		| Ast.OpAssignOp(Ast.OpShl) ->
 			leftside e1;
 			spr ctx " <<= ";
@@ -972,6 +1107,14 @@ and gen_expr ctx e =
 			leftside e1;
 			spr ctx " = ";
 			spr ctx "_hx_shift_right(";
+			gen_value_op ctx e1;
+			spr ctx ", ";
+			gen_value_op ctx e2;
+			spr ctx ")";
+		| Ast.OpAssignOp(Ast.OpMod) ->
+			leftside e1;
+			spr ctx " = ";
+			spr ctx "_hx_mod(";
 			gen_value_op ctx e1;
 			spr ctx ", ";
 			gen_value_op ctx e2;
@@ -987,9 +1130,9 @@ and gen_expr ctx e =
 			gen_value_op ctx e2;
 			spr ctx ")";
 		| Ast.OpAdd when (is_string_expr e1 || is_string_expr e2) ->
-			gen_value_op ctx e1;
+			gen_value_op ctx (as_string_expr ctx e1);
 			spr ctx " . ";
-			gen_value_op ctx e2;
+			gen_value_op ctx (as_string_expr ctx e2);
 		| Ast.OpShl ->
 			gen_value_op ctx e1;
 			spr ctx " << ";
@@ -1014,18 +1157,17 @@ and gen_expr ctx e =
 				| TField (f, s) when is_anonym_expr e1 || is_unknown_expr e1 ->
 					spr ctx "_hx_field(";
 					gen_value ctx f;
-					print ctx ", \"%s\")" s;
+					print ctx ", \"%s\")" (field_name s);
 				| _ ->
 					gen_field_op ctx e1;
 				);
-
 				spr ctx s_phop;
 
 				(match e2.eexpr with
 				| TField (f, s) when is_anonym_expr e2 || is_unknown_expr e2 ->
 					spr ctx "_hx_field(";
 					gen_value ctx f;
-					print ctx ", \"%s\")" s;
+					print ctx ", \"%s\")" (field_name s);
 				| _ ->
 					gen_field_op ctx e2);
 			end else if
@@ -1037,7 +1179,7 @@ and gen_expr ctx e =
 				gen_field_op ctx e2;
 			end else if
 				   ((se1 = "Int" || se1 = "Float" || se1 = "Null<Int>" || se1 = "Null<Float>")
-				   && (se1 = "Int" || se1 = "Float" || se1 = "Null<Int>" || se1 = "Null<Float>"))
+				&& (se1 = "Int" || se1 = "Float" || se1 = "Null<Int>" || se1 = "Null<Float>"))
 				|| (is_unknown_expr e1 && is_unknown_expr e2)
 				|| is_anonym_expr e1
 				|| is_anonym_expr e2
@@ -1049,15 +1191,19 @@ and gen_expr ctx e =
 				gen_field_op ctx e2;
 				spr ctx ")";
 			end else if
-				   se1 == se2
-				|| (match e1.eexpr with | TConst _ | TLocal _ | TArray _  | TNew _ -> true | _ -> false)
-				|| (match e2.eexpr with | TConst _ | TLocal _ | TArray _  | TNew _ -> true | _ -> false)
-				|| is_string_expr e1
-				|| is_string_expr e2
-				|| is_anonym_expr e1
-				|| is_anonym_expr e2
-				|| is_unknown_expr e1
-				|| is_unknown_expr e2
+				(
+					   se1 == se2
+					|| (match e1.eexpr with | TConst _ | TLocal _ | TArray _  | TNew _ -> true | _ -> false)
+					|| (match e2.eexpr with | TConst _ | TLocal _ | TArray _  | TNew _ -> true | _ -> false)
+					|| is_string_expr e1
+					|| is_string_expr e2
+					|| is_anonym_expr e1
+					|| is_anonym_expr e2
+					|| is_unknown_expr e1
+					|| is_unknown_expr e2
+				)
+				&& (type_string (follow e1.etype)) <> "Dynamic"
+				&& (type_string (follow e2.etype)) <> "Dynamic"
 			then begin
 				gen_field_op ctx e1;
 				spr ctx s_phop;
@@ -1072,47 +1218,8 @@ and gen_expr ctx e =
 			print ctx " %s " (Ast.s_binop op);
 			gen_value_op ctx e2;
 		));
-	| TField (e1,s)
-	| TClosure (e1,s) ->
-		(match follow e.etype with
-		| TFun (args, _) ->
-			(if ctx.is_call then begin
-				gen_field_access ctx false e1 s
-	  		end else if is_in_dynamic_methods ctx e1 s then begin
-	  			gen_field_access ctx true e1 s;
-	  		end else begin
-				let ob ex =
-					(match ex with
-					| TTypeExpr t ->
-						print ctx "\"";
-						spr ctx (s_path ctx (t_path t) false e1.epos);
-						print ctx "\""
-					| _ ->
-						gen_expr ctx e1) in
-
-				spr ctx "(isset(";
-				gen_field_access ctx true e1 s;
-				spr ctx ") ? ";
-				gen_field_access ctx true e1 s;
-				spr ctx ": array(";
-				ob e1.eexpr;
-				print ctx ", \"%s\"))" (s_ident s);
-
-			end)
-		| TMono _ ->
-			if ctx.is_call then
-				gen_field_access ctx false e1 s
-			else
-				gen_uncertain_string_var ctx s e1
-		| _ ->
-			if is_string_expr e1 then
-				gen_string_var ctx s e1
-			else if is_uncertain_expr e1 then
-				gen_uncertain_string_var ctx s e1
-			else
-				gen_field_access ctx true e1 s
-		)
-
+	| TField (e1,s) ->
+		gen_tfield ctx e e1 (field_name s)
 	| TTypeExpr t ->
 		print ctx "_hx_qtype(\"%s\")" (s_path_haxe (t_path t))
 	| TParenthesis e ->
@@ -1129,7 +1236,7 @@ and gen_expr ctx e =
 		(match eo with
 		| None ->
 			spr ctx "return"
-		| Some e when (match follow e.etype with TEnum({ e_path = [],"Void" },[]) -> true | _ -> false) ->
+		| Some e when (match follow e.etype with TEnum({ e_path = [],"Void" },[]) | TAbstract ({ a_path = [],"Void" },[]) -> true | _ -> false) ->
 			gen_value ctx e;
 			newline ctx;
 			spr ctx "return"
@@ -1243,11 +1350,11 @@ and gen_expr ctx e =
 			concat ctx ", " (gen_value ctx) el;
 			spr ctx "))";
 		| TField (ef,s) when is_static ef.etype && is_string_expr ef ->
-			gen_string_static_call ctx s ef el
+			gen_string_static_call ctx (field_name s) ef el
 		| TField (ef,s) when is_string_expr ef ->
-			gen_string_call ctx s ef el
-		| TField (ef,s) when is_anonym_expr ef && could_be_string_call s ->
-			gen_uncertain_string_call ctx s ef el
+			gen_string_call ctx (field_name s) ef el
+		| TField (ef,s) when is_anonym_expr ef && could_be_string_call (field_name s) ->
+			gen_uncertain_string_call ctx (field_name s) ef el
 		| _ ->
 			gen_call ctx ec el);
 	| TArrayDecl el ->
@@ -1323,16 +1430,6 @@ and gen_expr ctx e =
 				spr ctx ",";
 				gen_value ctx te2;
 				spr ctx ")";
-(*
-				let t = define_local ctx "»t" in
-				gen_value ctx te1;
-				print ctx "[%s = " t;
-				gen_value ctx te2;
-				spr ctx "] = ";
-				gen_value ctx te1;
-				print ctx "[%s]" t;
-				print ctx "[%s]" t;
-*)
 			| _ ->
 				spr ctx (Ast.s_unop op);
 				gen_value ctx te1;
@@ -1342,7 +1439,7 @@ and gen_expr ctx e =
 			);
 		| TField (e1,s) ->
 			spr ctx (Ast.s_unop op);
-			gen_field_access ctx true e1 s
+			gen_field_access ctx true e1 (field_name s)
 		| _ ->
 			spr ctx (Ast.s_unop op);
 			gen_value ctx e)
@@ -1350,11 +1447,11 @@ and gen_expr ctx e =
 		(match e.eexpr with
 		| TArray(te1, te2) ->
 			gen_value ctx te1;
-			spr ctx "->»a[";
+			spr ctx "->a[";
 			gen_value ctx te2;
 			spr ctx "]";
 		| TField (e1,s) ->
-			gen_field_access ctx true e1 s
+			gen_field_access ctx true e1 (field_name s)
 		| _ ->
 			gen_value ctx e);
 		spr ctx (Ast.s_unop op)
@@ -1381,11 +1478,11 @@ and gen_expr ctx e =
 		old()
 	| TObjectDecl fields ->
 		spr ctx "_hx_anonymous(array(";
-		concat ctx ", " (fun (f,e) -> print ctx "\"%s\" => " f; gen_value ctx e) fields;
+		concat ctx ", " (fun (f,e) -> print ctx "\"%s\" => " (escape_bin f); gen_value ctx e) fields;
 		spr ctx "))"
 	| TFor (v,it,e) ->
 		let b = save_locals ctx in
-		let tmp = define_local ctx "»it" in
+		let tmp = define_local ctx "__hx__it" in
 		let v = define_local ctx v.v_name in
 		(match it.eexpr with
 		| TCall (e,_) ->
@@ -1416,7 +1513,7 @@ and gen_expr ctx e =
 		restore_in_block ctx in_block;
 		gen_expr ctx (mk_block e);
 		let old = save_locals ctx in
-		let ex = define_local ctx "»e" in
+		let ex = define_local ctx "__hx__e" in
 		print ctx "catch(Exception $%s) {" ex;
 		let bend = open_block ctx in
 		let first = ref true in
@@ -1432,20 +1529,26 @@ and gen_expr ctx e =
 			let b = save_locals ctx in
 			if not !first then spr ctx "else ";
 			(match follow v.v_type with
-			| TEnum (te,_) -> (match snd te.e_path with
-				| "Bool"   -> print ctx "if(is_bool($%s = $%s))" ev evar
+			| TEnum (te,_) -> (match te.e_path with
+				| [], "Bool"   -> print ctx "if(is_bool($%s = $%s))" ev evar
 				| _ -> print ctx "if(($%s = $%s) instanceof %s)" ev evar (s_path ctx te.e_path te.e_extern e.epos));
 				restore_in_block ctx in_block;
 				gen_expr ctx (mk_block e);
-			| TInst (tc,_) -> (match snd tc.cl_path with
-				| "Int"	-> print ctx "if(is_int($%s = $%s))"		ev evar
-				| "Float"  -> print ctx "if(is_numeric($%s = $%s))"	ev evar
-				| "String" -> print ctx "if(is_string($%s = $%s))"	ev evar
-				| "Array"  -> print ctx "if(($%s = $%s) instanceof _hx_array)"	ev evar
+			| TInst (tc,_) -> (match tc.cl_path with
+				| [], "Int"	-> print ctx "if(is_int($%s = $%s))"		ev evar
+				| [], "Float"  -> print ctx "if(is_numeric($%s = $%s))"	ev evar
+				| [], "String" -> print ctx "if(is_string($%s = $%s))"	ev evar
+				| [], "Array"  -> print ctx "if(($%s = $%s) instanceof _hx_array)"	ev evar
 				| _ -> print ctx "if(($%s = $%s) instanceof %s)"    ev evar (s_path ctx tc.cl_path tc.cl_extern e.epos));
 				restore_in_block ctx in_block;
 				gen_expr ctx (mk_block e);
-
+			| TAbstract (ta,_) -> (match ta.a_path with
+				| [], "Int"	-> print ctx "if(is_int($%s = $%s))"		ev evar
+				| [], "Float"  -> print ctx "if(is_numeric($%s = $%s))"	ev evar
+				| [], "Bool"   -> print ctx "if(is_bool($%s = $%s))" ev evar
+				| _ -> print ctx "if(($%s = $%s) instanceof %s)"    ev evar (s_path ctx ta.a_path false e.epos));
+				restore_in_block ctx in_block;
+				gen_expr ctx (mk_block e);
 			| TFun _
 			| TLazy _
 			| TType _
@@ -1471,7 +1574,7 @@ and gen_expr ctx e =
 		spr ctx "}"
 	| TMatch (e,_,cases,def) ->
 		let b = save_locals ctx in
-		let tmp = define_local ctx "»t" in
+		let tmp = define_local ctx "__hx__t" in
 		print ctx "$%s = " tmp;
 		gen_value ctx e;
 		newline ctx;
@@ -1557,6 +1660,7 @@ and gen_expr ctx e =
 		let mk_texpr = function
 			| TClassDecl c -> TAnon { a_fields = PMap.empty; a_status = ref (Statics c) }
 			| TEnumDecl e -> TAnon { a_fields = PMap.empty; a_status = ref (EnumStatics e) }
+			| TAbstractDecl a -> TAnon { a_fields = PMap.empty; a_status = ref (AbstractStatics a) }
 			| TTypeDecl _ -> assert false
 		in
 		spr ctx "_hx_cast(";
@@ -1567,7 +1671,7 @@ and gen_expr ctx e =
 
 and argument_list_from_locals include_this in_var l =
 	let lst = ref [] in
-	if (include_this && in_var) then lst := "»this" :: !lst
+	if (include_this && in_var) then lst := "__hx__this" :: !lst
 	else if include_this then lst := "this" :: !lst;
 	PMap.iter (fun n _ ->
 		lst := !lst @ [n];
@@ -1575,7 +1679,7 @@ and argument_list_from_locals include_this in_var l =
 	!lst
 
 and remove_internals args =
-	List.filter (fun a -> a = "»this" or '»' <> String.get a 0) args;
+	List.filter (fun a -> a = "__hx__this" || not (start_with a "__hx__")) args;
 
 and inline_block ctx e =
 		let index = ctx.inline_index in
@@ -1623,7 +1727,7 @@ and canbe_ternary_param e =
 	| TTypeExpr _
 	| TConst _
 	| TLocal _
-	| TEnumField _
+	| TField (_,FEnum _)
 	| TParenthesis _
 	| TObjectDecl _
 	| TArrayDecl _
@@ -1637,24 +1741,22 @@ and canbe_ternary_param e =
 		cangen_ternary e eelse
 	| _ ->
 		false
-		
+
 and cangen_ternary e eelse =
-	match eelse with 
+	match eelse with
 	| Some other ->
 		(canbe_ternary_param e) && (canbe_ternary_param other)
-	| _ -> 
+	| _ ->
 		false
-		
+
 and gen_value ctx e =
 	match e.eexpr with
 	| TTypeExpr _
 	| TConst _
 	| TLocal _
-	| TEnumField _
 	| TArray _
 	| TBinop _
 	| TField _
-	| TClosure _
 	| TParenthesis _
 	| TObjectDecl _
 	| TArrayDecl _
@@ -1673,14 +1775,14 @@ and gen_value ctx e =
 		gen_value ctx cond;
 		spr ctx " ? ";
 		gen_value ctx e;
-		
+
 		(match eelse with
 		| Some e ->
 			spr ctx " : ";
 			gen_value ctx e
 		| _ ->());
 		spr ctx ")";
-	
+
 (*
 	| TIf (cond,e,eelse) ->
 		spr ctx "if";
@@ -1710,11 +1812,21 @@ and gen_value ctx e =
 	| TTry _ ->
 		inline_block ctx e
 
+let rec is_instance_method_defined cls m =
+	if PMap.exists m cls.cl_fields then
+		true
+	else
+		match cls.cl_super with
+		| Some (scls, _) ->
+			is_instance_method_defined scls m
+		| None ->
+			false
+
 let is_method_defined ctx m static =
 	if static then
 		PMap.exists m ctx.curclass.cl_statics
 	else
-		PMap.exists m ctx.curclass.cl_fields
+		is_instance_method_defined ctx.curclass m
 
 let generate_self_method ctx rights m static setter =
 	if setter then (
@@ -1730,8 +1842,16 @@ let generate_self_method ctx rights m static setter =
 	);
 	newline ctx
 
+let gen_assigned_value ctx eo =	match eo with
+	| Some ({eexpr = TConst _} as e) ->
+		print ctx " = ";
+		gen_value ctx e
+	| _ ->
+		()
+
 let generate_field ctx static f =
-	newline ctx;
+	if not (is_extern_field f) then
+		newline ctx;
 	ctx.locals <- PMap.empty;
 	ctx.inv_locals <- PMap.empty;
 	ctx.in_instance_method <- not static;
@@ -1749,9 +1869,11 @@ let generate_field ctx static f =
 		else
 			gen_function ctx (s_ident f.cf_name) fd f.cf_params p
 	| _ ->
-		if ctx.curclass.cl_interface then
-			match follow f.cf_type with
-			| TFun (args,r) ->
+		if (is_extern_field f) then
+			()
+		else if ctx.curclass.cl_interface then
+			match follow f.cf_type, f.cf_kind with
+			| TFun (args,r), Method _ ->
 				print ctx "function %s(" (s_ident f.cf_name);
 				concat ctx ", " (fun (arg,o,t) ->
 					s_funarg ctx arg t p o;
@@ -1776,10 +1898,12 @@ let generate_field ctx static f =
 				| AccCall m, _ ->
 					if not (is_method_defined ctx m static) then generate_self_method ctx rights m static false;
 					print ctx "%s $%s" rights (s_ident f.cf_name);
+					gen_assigned_value ctx f.cf_expr;
 					true
 				| _, AccCall m ->
 					if not (is_method_defined ctx m static) then generate_self_method ctx rights m static true;
 					print ctx "%s $%s" rights (s_ident f.cf_name);
+					gen_assigned_value ctx f.cf_expr;
 					true
 				| _ ->
 					false)
@@ -1793,7 +1917,7 @@ let generate_field ctx static f =
 					(match follow f.cf_type with
 					| TFun _
 					| TDynamic _ ->
-						print ctx "static function %s() { $»args = func_get_args(); return call_user_func_array(self::$%s, $»args); }" name name;
+						print ctx "static function %s() { $args = func_get_args(); return call_user_func_array(self::$%s, $args); }" name name;
 						newline ctx;
 					| _ ->
 						()
@@ -1802,14 +1926,7 @@ let generate_field ctx static f =
 					()
 				);
 			print ctx "%s $%s" rights name;
-			match f.cf_expr with
-			| None -> ()
-			| Some e ->
-				match e.eexpr with
-				| TConst _ ->
-					print ctx " = ";
-					gen_value ctx e
-				| _ -> ()
+			gen_assigned_value ctx f.cf_expr
 		end
 
 let generate_static_field_assign ctx path f =
@@ -1869,8 +1986,8 @@ let generate_inline_method ctx c m =
 	let in_value = (match ctx.in_value with Some _ -> true | _ -> false) in
 	let arguments = remove_internals (argument_list_from_locals m.ihasthis in_value ctx.locals) in
 	let arguments = match arguments with
-	| [h] when h = "this" -> ["»this"]
-	| h :: t when h = "this" -> "»this" :: t
+	| [h] when h = "this" -> ["__hx__this"]
+	| h :: t when h = "this" -> "__hx__this" :: t
 	| _ -> arguments
 	in
 
@@ -1886,23 +2003,6 @@ let generate_inline_method ctx c m =
 	let block = open_block ctx in
 	newline ctx;
 
-	(* blocks *)
-	if ctx.com.debug then begin
-		(*--php-prefix*)
-(*		print_endline (s_path_haxe c.cl_path); *)
-		spr ctx "$»spos = $GLOBALS['%s']->length";
-		newline ctx;
-	end;
-(*
-	if ctx.com.debug then begin
-		(*--php-prefix*)
-		print_endline (s_path_haxe c.cl_path);
-		print ctx "\t$GLOBALS['%s']->push('%s:lambda_%d')" "%s" (s_path_haxe c.cl_path) m.iindex;
-		newline ctx;
-		spr ctx "\t$»spos = $GLOBALS['%s']->length";
-		newline ctx;
-	end;
-*)
 	gen_expr ctx m.iexpr;
 	block();
 	old();
@@ -1921,7 +2021,8 @@ let generate_class ctx c =
 	| Some (csup,_) ->
 		requires_constructor := false;
 		print ctx "extends %s " (s_path ctx csup.cl_path csup.cl_extern c.cl_pos));
-	(match c.cl_implements with
+	let implements = ExtList.List.unique ~cmp:(fun a b -> (fst a).cl_path = (fst b).cl_path) c.cl_implements in
+	(match implements with
 	| [] -> ()
 	| l ->
 		spr ctx (if c.cl_interface then "extends " else "implements ");
@@ -1954,16 +2055,38 @@ let generate_class ctx c =
 	(match c.cl_dynamic with
 		| Some _ when not c.cl_interface && not (super_has_dynamic c) ->
 			newline ctx;
-			spr ctx "public $»dynamics = array();\n\tpublic function __get($n) {\n\t\tif(isset($this->»dynamics[$n]))\n\t\t\treturn $this->»dynamics[$n];\n\t}\n\tpublic function __set($n, $v) {\n\t\t$this->»dynamics[$n] = $v;\n\t}\n\tpublic function __call($n, $a) {\n\t\tif(isset($this->»dynamics[$n]) && is_callable($this->»dynamics[$n]))\n\t\t\treturn call_user_func_array($this->»dynamics[$n], $a);\n\t\tif('toString' == $n)\n\t\t\treturn $this->__toString();\n\t\tthrow new HException(\"Unable to call «\".$n.\"»\");\n\t}"
+			spr ctx "public $__dynamics = array();\n\tpublic function __get($n) {\n\t\tif(isset($this->__dynamics[$n]))\n\t\t\treturn $this->__dynamics[$n];\n\t}\n\tpublic function __set($n, $v) {\n\t\t$this->__dynamics[$n] = $v;\n\t}\n\tpublic function __call($n, $a) {\n\t\tif(isset($this->__dynamics[$n]) && is_callable($this->__dynamics[$n]))\n\t\t\treturn call_user_func_array($this->__dynamics[$n], $a);\n\t\tif('toString' == $n)\n\t\t\treturn $this->__toString();\n\t\tthrow new HException(\"Unable to call <\".$n.\">\");\n\t}"
 		| Some _
 		| _ ->
 			if List.length ctx.dynamic_methods > 0 then begin
 				newline ctx;
-				spr ctx "public function __call($m, $a) {\n\t\tif(isset($this->$m) && is_callable($this->$m))\n\t\t\treturn call_user_func_array($this->$m, $a);\n\t\telse if(isset($this->»dynamics[$m]) && is_callable($this->»dynamics[$m]))\n\t\t\treturn call_user_func_array($this->»dynamics[$m], $a);\n\t\telse if('toString' == $m)\n\t\t\treturn $this->__toString();\n\t\telse\n\t\t\tthrow new HException('Unable to call «'.$m.'»');\n\t}";
+				spr ctx "public function __call($m, $a) {\n\t\tif(isset($this->$m) && is_callable($this->$m))\n\t\t\treturn call_user_func_array($this->$m, $a);\n\t\telse if(isset($this->__dynamics[$m]) && is_callable($this->__dynamics[$m]))\n\t\t\treturn call_user_func_array($this->__dynamics[$m], $a);\n\t\telse if('toString' == $m)\n\t\t\treturn $this->__toString();\n\t\telse\n\t\t\tthrow new HException('Unable to call <'.$m.'>');\n\t}";
 			end;
 	);
 
 	List.iter (generate_field ctx true) c.cl_ordered_statics;
+
+	let gen_props props =
+		String.concat "," (List.map (fun (p,v) -> "\"" ^ p ^ "\" => \"" ^ v ^ "\"") props)
+	in
+
+	let rec fields c =
+		let list = Codegen.get_properties (c.cl_ordered_statics @ c.cl_ordered_fields) in
+		match c.cl_super with
+		| Some (csup, _) ->
+			list @ fields csup
+		| None ->
+			list
+	in
+
+	if not c.cl_interface then (match fields c with
+		| [] ->
+			()
+		| props ->
+			newline ctx;
+			print ctx "static $__properties__ = array(%s)" (gen_props props);
+		);
+
 
 	cl();
 	newline ctx;
@@ -1987,7 +2110,7 @@ let createmain com e =
 		com = com;
 		stack = stack_init com false;
 		tabs = "";
-		ch = open_out_bin (com.file ^ "/" ^ filename);
+		ch = open_out (com.file ^ "/" ^ filename);
 		path = ([], "");
 		buf = Buffer.create (1 lsl 14);
 		in_value = None;
@@ -2015,7 +2138,7 @@ let createmain com e =
 	} in
 
 	spr ctx "if(version_compare(PHP_VERSION, '5.1.0', '<')) {
-    exit('Your current PHP version is: ' . PHP_VERSION . '. haXe/PHP generates code for version 5.1.0 or later');
+    exit('Your current PHP version is: ' . PHP_VERSION . '. Haxe/PHP generates code for version 5.1.0 or later');
 }";
 	newline ctx;
 	newline ctx;
@@ -2174,6 +2297,7 @@ let generate com =
 				all_dynamic_methods := dynamic_methods_names c.cl_ordered_statics @ !all_dynamic_methods;
 		| _ -> ())
 	) com.types;
+	List.iter (Codegen.fix_abstract_inheritance com) com.types;
 	List.iter (fun t ->
 		(match t with
 		| TClassDecl c ->
@@ -2223,7 +2347,7 @@ let generate com =
 				let ctx = init com php_lib_path e.e_path 1 in
 			generate_enum ctx e;
 			close ctx
-		| TTypeDecl t ->
+		| TTypeDecl _ | TAbstractDecl _ ->
 			());
 	) com.types;
 	(match com.main with

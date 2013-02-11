@@ -1,10 +1,31 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 package tools.haxelib;
-import tools.haxelib.Datas;
+import tools.haxelib.Data;
 import tools.haxelib.SiteDb;
 
 class SiteApi {
 
-	var db : neko.db.Connection;
+	var db : sys.db.Connection;
 
 	public function new( db ) {
 		this.db = db;
@@ -51,7 +72,7 @@ class SiteApi {
 	}
 
 	public function register( name : String, pass : String, mail : String, fullname : String ) : Bool {
-		if( !Datas.alphanum.match(name) )
+		if( !Data.alphanum.match(name) )
 			throw "Invalid user name, please use alphanumeric characters";
 		if( name.length < 3 )
 			throw "User name must be at least 3 characters";
@@ -90,11 +111,11 @@ class SiteApi {
 	public function processSubmit( id : String, user : String, pass : String ) : String {
 		var path = Site.TMP_DIR+"/"+Std.parseInt(id)+".tmp";
 
-		var file = try neko.io.File.read(path,true) catch( e : Dynamic ) throw "Invalid file id #"+id;
-		var zip = try neko.zip.Reader.readZip(file) catch( e : Dynamic ) { file.close(); neko.Lib.rethrow(e); };
+		var file = try sys.io.File.read(path,true) catch( e : Dynamic ) throw "Invalid file id #"+id;
+		var zip = try haxe.zip.Reader.readZip(file) catch( e : Dynamic ) { file.close(); neko.Lib.rethrow(e); };
 		file.close();
 
-		var infos = Datas.readInfos(zip,true);
+		var infos = Data.readInfos(zip,true);
 		var u = User.manager.search({ name : user }).first();
 		if( u == null || u.pass != pass )
 			throw "Invalid username or password";
@@ -149,11 +170,12 @@ class SiteApi {
 		var curtags = otags.map(function(t) return t.tag).join(":");
 
 		// update public infos
-		if( infos.desc != p.description || p.website != infos.website || pdevs.length != devs.length || tags.join(":") != curtags ) {
+		if( infos.desc != p.description || p.website != infos.website || p.license != infos.license || pdevs.length != devs.length || tags.join(":") != curtags ) {
 			if( u.id != p.owner.id )
 				throw "Only project owner can modify project infos";
 			p.description = infos.desc;
 			p.website = infos.website;
+			p.license = infos.license;
 			p.update();
 			if( pdevs.length != devs.length ) {
 				for( d in pdevs )
@@ -187,7 +209,7 @@ class SiteApi {
 
 		// update documentation
 		var doc = null;
-		var docXML = Datas.readDoc(zip);
+		var docXML = Data.readDoc(zip);
 		if( docXML != null ) {
 			var p = new haxe.rtti.XmlParser();
 			p.process(Xml.parse(docXML).firstElement(),null);
@@ -197,7 +219,7 @@ class SiteApi {
 				switch( x ) {
 				case TPackage(name,_,_):
 					switch( name ) {
-					case "flash","flash9","haxe","js","neko","cpp","php","tools": // don't include haXe core types
+					case "flash","flash8","sys","cs","java","flash9","haxe","js","neko","cpp","php","tools": // don't include haXe core types
 					default: roots.push(x);
 					}
 				default:
@@ -211,9 +233,9 @@ class SiteApi {
 		}
 
 		// update file
-		var target = Site.REP_DIR+"/"+Datas.fileName(p.name,infos.version);
-		if( current != null ) neko.FileSystem.deleteFile(target);
-		neko.FileSystem.rename(path,target);
+		var target = Site.REP_DIR+"/"+Data.fileName(p.name,infos.version);
+		if( current != null ) sys.FileSystem.deleteFile(target);
+		sys.FileSystem.rename(path,target);
 
 		// update existing version
 		if( current != null ) {

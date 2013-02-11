@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005-2010, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe.macro;
 
@@ -40,7 +37,6 @@ enum Constant {
 	CFloat( f : String );
 	CString( s : String );
 	CIdent( s : String );
-	CType( s : String );
 	CRegexp( r : String, opt : String );
 }
 
@@ -67,6 +63,7 @@ enum Binop {
 	OpMod;
 	OpAssignOp( op : Binop );
 	OpInterval;
+	OpArrow;
 }
 
 
@@ -83,29 +80,46 @@ typedef Expr = {
 	var pos : Position;
 }
 
-typedef ExprRequire<T> = Expr;
+typedef ExprOf<T> = Expr;
+
+typedef Case = {
+	var values : Array<Expr>;
+	@:optional var guard : Null<Expr>;
+	var expr: Null<Expr>;
+}
+
+typedef Var = {
+	name : String,
+	type : Null<ComplexType>,
+	expr : Null<Expr>
+}
+
+typedef Catch = {
+	name : String,
+	type : ComplexType,
+	expr : Expr
+}
 
 enum ExprDef {
 	EConst( c : Constant );
 	EArray( e1 : Expr, e2 : Expr );
 	EBinop( op : Binop, e1 : Expr, e2 : Expr );
 	EField( e : Expr, field : String );
-	EType( e : Expr, field : String );
 	EParenthesis( e : Expr );
 	EObjectDecl( fields : Array<{ field : String, expr : Expr }> );
 	EArrayDecl( values : Array<Expr> );
 	ECall( e : Expr, params : Array<Expr> );
 	ENew( t : TypePath, params : Array<Expr> );
 	EUnop( op : Unop, postFix : Bool, e : Expr );
-	EVars( vars : Array<{ name : String, type : Null<ComplexType>, expr : Null<Expr> }> );
+	EVars( vars : Array<Var> );
 	EFunction( name : Null<String>, f : Function );
 	EBlock( exprs : Array<Expr> );
 	EFor( it : Expr, expr : Expr );
 	EIn( e1 : Expr, e2 : Expr );
 	EIf( econd : Expr, eif : Expr, eelse : Null<Expr> );
 	EWhile( econd : Expr, e : Expr, normalWhile : Bool );
-	ESwitch( e : Expr, cases : Array<{ values : Array<Expr>, expr : Expr }>, edef : Null<Expr> );
-	ETry( e : Expr, catches : Array<{ name : String, type : ComplexType, expr : Expr }> );
+	ESwitch( e : Expr, cases : Array<Case>, edef : Null<Null<Expr>> );
+	ETry( e : Expr, catches : Array<Catch> );
 	EReturn( ?e : Null<Expr> );
 	EBreak;
 	EContinue;
@@ -116,6 +130,7 @@ enum ExprDef {
 	EDisplayNew( t : TypePath );
 	ETernary( econd : Expr, eif : Expr, eelse : Expr );
 	ECheckType( e : Expr, t : ComplexType );
+	EMeta( s : MetadataEntry, e : Expr );
 }
 
 enum ComplexType {
@@ -131,7 +146,7 @@ typedef TypePath = {
 	var pack : Array<String>;
 	var name : String;
 	var params : Array<TypeParam>;
-	var sub : Null<String>;
+	@:optional var sub : Null<String>;
 }
 
 enum TypeParam {
@@ -139,29 +154,41 @@ enum TypeParam {
 	TPExpr( e : Expr );
 }
 
+typedef TypeParamDecl = {
+	var name : String;
+	@:optional var constraints : Array<ComplexType>;
+	@:optional var params : Array<TypeParamDecl>;
+}
+
 typedef Function = {
 	var args : Array<FunctionArg>;
 	var ret : Null<ComplexType>;
 	var expr : Null<Expr>;
-	var params : Array<{ name : String, constraints : Array<ComplexType> }>;
+	var params : Array<TypeParamDecl>;
 }
 
 typedef FunctionArg = {
 	var name : String;
 	var opt : Bool;
 	var type : Null<ComplexType>;
-	var value : Null<Expr>;
+	@:optional var value : Null<Expr>;
 }
 
-typedef Metadata = Array<{ name : String, params : Array<Expr>, pos : Position }>;
+typedef MetadataEntry = {
+	name : String,
+	params : Array<Expr>,
+	pos : Position
+}
+
+typedef Metadata = Array<MetadataEntry>;
 
 typedef Field = {
 	var name : String;
-	var doc : Null<String>;
-	var access : Array<Access>;
+	@:optional var doc : Null<String>;
+	@:optional var access : Array<Access>;
 	var kind : FieldType;
 	var pos : Position;
-	var meta : Metadata;
+	@:optional var meta : Metadata;
 }
 
 enum Access {
@@ -171,12 +198,13 @@ enum Access {
 	AOverride;
 	ADynamic;
 	AInline;
+	AMacro;
 }
 
 enum FieldType {
 	FVar( t : Null<ComplexType>, ?e : Null<Expr> );
 	FFun( f : Function );
-	FProp( get : String, set : String, t : ComplexType, ?e : Null<Expr> );
+	FProp( get : String, set : String, ?t : Null<ComplexType>, ?e : Null<Expr> );
 }
 
 typedef TypeDefinition = {
@@ -184,7 +212,7 @@ typedef TypeDefinition = {
 	var name : String;
 	var pos : Position;
 	var meta : Metadata;
-	var params : Array<{ name : String, constraints : Array<ComplexType> }>;
+	var params : Array<TypeParamDecl>;
 	var isExtern : Bool;
 	var kind : TypeDefKind;
 	var fields : Array<Field>;
@@ -194,6 +222,7 @@ enum TypeDefKind {
 	TDEnum;
 	TDStructure;
 	TDClass( ?extend : TypePath, ?implement : Array<TypePath>, ?isInterface : Bool );
+	TDAlias( t : ComplexType ); // ignore TypeDefinition.fields
 }
 
 /**
@@ -205,5 +234,8 @@ class Error {
 	public function new(m,p) {
 		this.message = m;
 		this.pos = p;
+	}
+	function toString() {
+		return message;
 	}
 }

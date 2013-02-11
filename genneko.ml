@@ -1,28 +1,32 @@
 (*
- *  Haxe Compiler
- *  Copyright (c)2005 Nicolas Cannasse
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *)
+
 open Ast
 open Type
 open Nast
-open Nxml
 open Common
 
 type context = {
+	version : int;
 	com : Common.context;
 	packages : (string list, unit) Hashtbl.t;
 	globals : (string list * string, string) Hashtbl.t;
@@ -39,7 +43,7 @@ let pos ctx p =
 	if ctx.macros then
 		{
 			psource = p.pfile;
-			pline = p.pmin lor (p.pmax lsl 16);
+			pline = p.pmin lor ((p.pmax - p.pmin) lsl 20);
 		}
 	else let file = (match ctx.com.debug with
 		| true -> ctx.curclass ^ "::" ^ ctx.curmethod
@@ -156,7 +160,14 @@ let rec gen_big_string ctx p s =
 let gen_constant ctx pe c =
 	let p = pos ctx pe in
 	match c with
-	| TInt i -> (try int p (Int32.to_int i) with _ -> error "This integer is too big to be compiled to a Neko 31-bit integer. Please use a Float instead" pe)
+	| TInt i ->
+		(try
+			let h = Int32.to_int (Int32.shift_right_logical i 24) in
+			if (h land 128 = 0) <> (h land 64 = 0) then raise Exit;
+			int p (Int32.to_int i)
+		with _ ->
+			if ctx.version < 2 then error "This integer is too big to be compiled to a Neko 31-bit integer. Please use a Float instead" pe;
+			(EConst (Int32 i),p))
 	| TFloat f -> (EConst (Float f),p)
 	| TString s -> call p (field p (ident p "String") "new") [gen_big_string ctx p s]
 	| TBool b -> (EConst (if b then True else False),p)
@@ -191,7 +202,7 @@ and gen_call ctx p e el =
 	| TField ({ eexpr = TConst TSuper; etype = t },f) , _ ->
 		let c = (match follow t with TInst (c,_) -> c | _ -> assert false) in
 		call p (builtin p "call") [
-			field p (gen_type_path p (fst c.cl_path,"@" ^ snd c.cl_path)) f;
+			field p (gen_type_path p (fst c.cl_path,"@" ^ snd c.cl_path)) (field_name f);
 			this p;
 			array p (List.map (gen_expr ctx) el)
 		]
@@ -211,32 +222,28 @@ and gen_expr ctx e =
 			(EArray (ident p v.v_name,int p 0),p)
 		else
 			ident p v.v_name
-	| TEnumField (e,f) ->
-		field p (gen_type_path p e.e_path) f
 	| TArray (e1,e2) ->
 		(EArray (gen_expr ctx e1,gen_expr ctx e2),p)
 	| TBinop (OpAssign,{ eexpr = TField (e1,f) },e2) ->
-		(EBinop ("=",field p (gen_expr ctx e1) f,gen_expr ctx e2),p)
+		(EBinop ("=",field p (gen_expr ctx e1) (field_name f),gen_expr ctx e2),p)
 	| TBinop (op,e1,e2) ->
 		gen_binop ctx p op e1 e2
-	| TField (e,f) ->
-		field p (gen_expr ctx e) f
-	| TClosure (({ eexpr = TTypeExpr _ } as e),f) ->
-		field p (gen_expr ctx e) f
-	| TClosure (e2,f) ->
+	| TField (e2,FClosure (_,f)) ->
 		(match follow e.etype with
 		| TFun (args,_) ->
 			let n = List.length args in
 			if n > 5 then error "Cannot create closure with more than 5 arguments" e.epos;
 			let tmp = ident p "@tmp" in
 			EBlock [
-				(EVars ["@tmp", Some (gen_expr ctx e2); "@fun", Some (field p tmp f)] , p);
+				(EVars ["@tmp", Some (gen_expr ctx e2); "@fun", Some (field p tmp f.cf_name)] , p);
 				if ctx.macros then
 					call p (builtin p "closure") [ident p "@fun";tmp]
 				else
 					call p (ident p ("@closure" ^ string_of_int n)) [tmp;ident p "@fun"]
 			] , p
 		| _ -> assert false)
+	| TField (e,f) ->
+		field p (gen_expr ctx e) (field_name f)
 	| TTypeExpr t ->
 		gen_type_path p (t_path t)
 	| TParenthesis e ->
@@ -279,7 +286,7 @@ and gen_expr ctx e =
 			in
 			match c with
 			| None | Some TNull -> acc
-			| Some c ->	gen_expr ctx (Codegen.set_default ctx.com a c e.epos) :: acc			
+			| Some c ->	gen_expr ctx (Codegen.set_default ctx.com a c e.epos) :: acc
 		) [] f.tf_args in
 		let e = gen_expr ctx f.tf_expr in
 		let e = (match inits with [] -> e | _ -> EBlock (List.rev (e :: inits)),p) in
@@ -301,6 +308,9 @@ and gen_expr ctx e =
 			,NormalWhile),p)]
 		,p)
 	| TIf (cond,e1,e2) ->
+		(* if(e)-1 is parsed as if( e - 1 ) *)
+		let parent e = mk (TParenthesis e) e.etype e.epos in
+		let e1 = (match e1.eexpr with TConst (TInt n) when n < 0l -> parent e1 | TConst (TFloat f) when f.[0] = '-' -> parent e1 | _ -> e1) in
 		(EIf (gen_expr ctx cond,gen_expr ctx e1,(match e2 with None -> None | Some e -> Some (gen_expr ctx e))),p)
 	| TWhile (econd,e,flag) ->
 		(EWhile (gen_expr ctx econd, gen_expr ctx e, match flag with Ast.NormalWhile -> NormalWhile | Ast.DoWhile -> DoWhile),p)
@@ -438,14 +448,13 @@ and gen_expr ctx e =
 
 let gen_method ctx p c acc =
 	ctx.curmethod <- c.cf_name;
+	if is_extern_field c then acc else
 	match c.cf_expr with
 	| None ->
-		(match c.cf_kind with
-		| Var { v_read = AccResolve } -> acc
-		| _ -> (c.cf_name, null p) :: acc)
+		((c.cf_name, null p) :: acc)
 	| Some e ->
 		match e.eexpr with
-		| TCall ({ eexpr = TField ({ eexpr = TTypeExpr (TClassDecl { cl_path = (["neko"],"Lib") }) }, load)},[{ eexpr = TConst (TString m) };{ eexpr = TConst (TString f) };{ eexpr = TConst (TInt n) }]) when load = "load" || load = "loadLazy" ->
+		| TCall ({ eexpr = TField (_,FStatic ({cl_path=["neko"],"Lib"},{cf_name="load" | "loadLazy" as load})) },[{ eexpr = TConst (TString m) };{ eexpr = TConst (TString f) };{ eexpr = TConst (TInt n) }]) ->
 			let p = pos ctx e.epos in
 			let e = call p (EField (builtin p "loader","loadprim"),p) [(EBinop ("+",(EBinop ("+",str p m,str p "@"),p),str p f),p); (EConst (Int (Int32.to_int n)),p)] in
 			let e = (if load = "load" then e else (ETry (e,"@e",call p (ident p "@lazy_error") [ident p "@e"]),p)) in
@@ -521,7 +530,7 @@ let gen_class ctx c =
 						call p (builtin p "objsetproto") [ident p "@tmp";field p (field p (gen_type_path p csup.cl_path) "prototype") "__properties__"];
 						ident p "@tmp"
 					],p)
-				| _ -> props					
+				| _ -> props
 			) in
 			[EBinop ("=",field p clpath "__properties__",props),p])
 		@ match c.cl_path with
@@ -601,12 +610,12 @@ let gen_type ctx t acc =
 			acc
 		else
 			gen_enum ctx e :: acc
-	| TTypeDecl t ->
+	| TTypeDecl _ | TAbstractDecl _ ->
 		acc
 
 let gen_static_vars ctx t =
 	match t with
-	| TEnumDecl _ | TTypeDecl _ -> []
+	| TEnumDecl _ | TTypeDecl _ | TAbstractDecl _ -> []
 	| TClassDecl c ->
 		if c.cl_extern then
 			[]
@@ -634,7 +643,7 @@ let gen_package ctx t =
 		| x :: l ->
 			let path = acc @ [x] in
 			if not (Hashtbl.mem ctx.packages path) then begin
-				let p = pos ctx (match t with TClassDecl c -> c.cl_pos | TEnumDecl e -> e.e_pos | TTypeDecl t -> t.t_pos) in
+				let p = pos ctx (t_infos t).mt_pos in
 				let e = (EBinop ("=",gen_type_path p (acc,x),call p (builtin p "new") [null p]),p) in
 				Hashtbl.add ctx.packages path ();
 				(match acc with
@@ -689,28 +698,63 @@ let gen_name ctx acc t =
 			| l ->
 				let interf = field p (gen_type_path p c.cl_path) "__interfaces__" in
 				(EBinop ("=",interf, call p (field p (ident p "Array") "new1") [interf; int p (List.length l)]),p) :: acc)
-	| TTypeDecl _ ->
+	| TTypeDecl _ | TAbstractDecl _ ->
 		acc
 
 let generate_libs_init = function
-	| [] -> ""
+	| [] -> []
 	| libs ->
-		let boot =
-			"var @s = $loader.loadprim(\"std@sys_string\",0)();" ^
-			"var @env = $loader.loadprim(\"std@get_env\",1);" ^
-			"var @b = if( @s == \"Windows\" ) " ^
-				"@env(\"HAXEPATH\") + \"lib\\\\\"" ^
-				"else try $loader.loadprim(\"std@file_contents\",1)(@env(\"HOME\")+\"/.haxelib\") + \"/\"" ^
-				"catch e if( @s == \"Linux\" ) \"/usr/lib/haxe/lib/\" else \"/usr/local/lib/haxe/lib/\";" ^
-			"@s = @s + \"/\";"
+		(*
+			var @s = $loader.loadprim("std@sys_string",0)();
+			var @env = $loader.loadprim("std@get_env",1);
+			var @b = if( @s == "Windows" )
+				@env("HAXEPATH") + "lib\\"
+				else try $loader.loadprim("std@file_contents",1)(@env("HOME")+"/.haxelib") + "/"
+				catch e if( @s == "Linux" ) "/usr/lib/haxe/lib/" else "/usr/local/lib/haxe/lib/";
+			if( $loader.loadprim("std@sys_is64",0)() ) @s = @s + 64;
+			@s = @s + "/"
+		*)
+		let p = null_pos in
+		let es = ident p "@s" in
+		let loadp n nargs =
+			call p (field p (builtin p "loader") "loadprim") [str p ("std@" ^ n); int p nargs]
 		in
-		List.fold_left (fun acc l ->
-			let full_path = l.[0] = '/' || l.[1] = ':' in
-			acc ^ "$loader.path = $array(" ^ (if full_path then "" else "@b + ") ^ "\"" ^ Nast.escape l ^ "\" + @s,$loader.path);"
-		) boot libs
+		let op o e1 e2 =
+			(EBinop (o,e1,e2),p)
+		in
+		let boot = [
+			(EVars [
+				"@s",Some (call p (loadp "sys_string" 0) []);
+				"@env",Some (loadp "get_env" 1);
+				"@b", Some (EIf (op "==" es (str p "Windows"),
+					op "+" (call p (ident p "@env") [str p "HAXEPATH"]) (str p "lib\\"),
+					Some (ETry (
+						op "+" (call p (loadp "file_contents" 1) [op "+" (call p (ident p "@env") [str p "HOME"]) (str p "./haxelib")]) (str p "/"),
+						"e",
+						(EIf (op "==" es (str p "Linux"),
+							str p "/usr/lib/haxe/lib/",
+							Some (str p "/usr/local/lib/haxe/lib/")
+						),p)
+					),p)
+				),p);
+			],p);
+			(EIf (call p (loadp "sys_is64" 0) [],op "=" es (op "+" es (int p 64)),None),p);
+			op "=" es (op "+" es (str p "/"));
+		] in
+		let lpath = field p (builtin p "loader") "path" in
+		boot @ List.map (fun dir ->
+			let full_path = dir.[0] = '/' || dir.[1] = ':' in
+			let dstr = str p dir in
+			(*
+				// for each lib dir
+				$loader.path = $array($loader.path,dir+@s);
+			*)
+			op "=" lpath (call p (builtin p "array") [op "+" (if full_path then dstr else op "+" (ident p "@b") dstr) (ident p "@s"); lpath])
+		) libs
 
-let new_context com macros =
+let new_context com ver macros =
 	{
+		version = ver;
 		com = com;
 		globals = Hashtbl.create 0;
 		curglobal = 0;
@@ -773,30 +817,30 @@ let build ctx types =
 	packs @ methods @ boot :: names @ inits @ vars
 
 let generate com =
-	let ctx = new_context com false in
+	let ctx = new_context com (if Common.defined com Define.NekoV2 then 2 else 1) false in
 	let t = Common.timer "neko generation" in
-	let libs = (ENeko (generate_libs_init com.neko_libs) , { psource = "<header>"; pline = 1; }) in
+	let libs = (EBlock (generate_libs_init com.neko_libs) , { psource = "<header>"; pline = 1; }) in
 	let el = build ctx com.types in
 	let emain = (match com.main with None -> [] | Some e -> [gen_expr ctx e]) in
 	let e = (EBlock ((header()) @ libs :: el @ emain), null_pos) in
+	let source = Common.defined com Define.NekoSource in
+	let use_nekoc = Common.defined com Define.UseNekoc in
+	if not use_nekoc then begin
+		let ch = IO.output_channel (open_out_bin com.file) in
+		Nbytecode.write ch (Ncompile.compile ctx.version e);
+		IO.close_out ch;
+	end;
+	let command cmd = try com.run_command cmd with _ -> -1 in
 	let neko_file = (try Filename.chop_extension com.file with _ -> com.file) ^ ".neko" in
-	let ch = IO.output_channel (open_out_bin neko_file) in
-	let source = Common.defined com "neko-source" in
-	if source then Nxml.write ch (Nxml.to_xml e) else Binast.write ch e;
-	IO.close_out ch;
-	t();
-	let command cmd = try Sys.command cmd with _ -> -1 in
+	if source || use_nekoc then begin
+		let ch = IO.output_channel (open_out_bin neko_file) in
+		Binast.write ch e;
+		IO.close_out ch;
+	end;
+	if use_nekoc && command ("nekoc" ^ (if ctx.version > 1 then " -version " ^ string_of_int ctx.version else "") ^ " \"" ^ neko_file ^ "\"") <> 0 then failwith "Neko compilation failure";
 	if source then begin
 		if command ("nekoc -p \"" ^ neko_file ^ "\"") <> 0 then failwith "Failed to print neko code";
 		Sys.remove neko_file;
 		Sys.rename ((try Filename.chop_extension com.file with _ -> com.file) ^ "2.neko") neko_file;
 	end;
-	let c = Common.timer "neko compilation" in
-	if command ("nekoc \"" ^ neko_file ^ "\"") <> 0 then failwith "Neko compilation failure";
-	c();
-	let output = Filename.chop_extension neko_file ^ ".n" in
-	if output <> com.file then begin
-		(try Sys.remove com.file with _ -> ());
-		Sys.rename output com.file;
-	end;
-	if not source then Sys.remove neko_file
+	t()

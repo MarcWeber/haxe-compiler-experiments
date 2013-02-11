@@ -1,45 +1,41 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
 enum XmlType {
 }
 
-@:core_api class Xml {
+@:coreApi class Xml {
 	public static var Element(default,null) : XmlType;
 	public static var PCData(default,null) : XmlType;
 	public static var CData(default,null) : XmlType;
 	public static var Comment(default,null) : XmlType;
 	public static var DocType(default,null) : XmlType;
-	public static var Prolog(default,null) : XmlType;
+	public static var ProcessingInstruction(default,null) : XmlType;
 	public static var Document(default,null) : XmlType;
 
 
 	private var _nodeName : String;
 	private var _nodeValue : String;
 	private var _attributes : Dynamic<String>;
-	private var _children : Array<Dynamic>;
+	private var _children : Array<Xml>;
 	private var _parent : Xml;
 
 	function new() : Void {
@@ -53,7 +49,7 @@ enum XmlType {
 		var parser = {
 			cur : x,
 			xml : function(name,att) {
-				var x : Dynamic = new Xml();
+				var x = new Xml();
 				x._parent = untyped __this__.cur;
 				x.nodeType = Xml.Element;
 				x._nodeName = new String(name);
@@ -83,7 +79,7 @@ enum XmlType {
 				var x = new Xml();
 				x._parent = untyped __this__.cur;
 				if( untyped text.cca(0) == 63 ) {
-					x.nodeType = Xml.Prolog;
+					x.nodeType = Xml.ProcessingInstruction;
 					text = new String(text);
 					text = text.substr(1, text.length - 2);
 				} else {
@@ -98,7 +94,8 @@ enum XmlType {
 				x._parent = untyped __this__.cur;
 				x.nodeType = Xml.DocType;
 				x._nodeValue = (new String(text)).substr(1);
-				untyped __this__.cur.addChild(x);
+				var p : Xml = untyped __this__.cur;
+				p.addChild(x);
 			},
 			done : function() {
 				untyped __this__.cur = __this__.cur._parent;
@@ -147,9 +144,9 @@ enum XmlType {
 		return r;
 	}
 
-	public static function createProlog( data : String ) : Xml {
+	public static function createProcessingInstruction( data : String ) : Xml {
 		var r = new Xml();
-		r.nodeType = Xml.Prolog;
+		r.nodeType = Xml.ProcessingInstruction;
 		r._nodeValue = data;
 		return r;
 	}
@@ -163,37 +160,37 @@ enum XmlType {
 
 	public var nodeType(default,null) : XmlType;
 
-	public var nodeName(getNodeName,setNodeName) : String;
+	public var nodeName(get,set) : String;
 
-	public var nodeValue(getNodeValue,setNodeValue) : String;
+	public var nodeValue(get,set) : String;
 
 
-	private function getNodeName() : String {
+	private function get_nodeName() : String {
 		if( nodeType != Xml.Element )
 			throw "bad nodeType";
 		return _nodeName;
 	}
 
-	private function setNodeName( n : String ) : String {
+	private function set_nodeName( n : String ) : String {
 		if( nodeType != Xml.Element )
 			throw "bad nodeType";
 		return _nodeName = n;
 	}
 
-	private function getNodeValue() : String {
+	private function get_nodeValue() : String {
 		if( nodeType == Xml.Element || nodeType == Xml.Document )
 			throw "bad nodeType";
 		return _nodeValue;
 	}
 
-	private function setNodeValue( v : String ) : String {
+	private function set_nodeValue( v : String ) : String {
 		if( nodeType == Xml.Element || nodeType == Xml.Document )
 			throw "bad nodeType";
 		return _nodeValue = v;
 	}
 
-	public var parent(getParent,null) : Xml;
-	private function getParent() : Xml {
+	public var parent(get,null) : Xml;
+	private function get_parent() : Xml {
 		return _parent;
 	}
 
@@ -383,7 +380,7 @@ enum XmlType {
 			s.add(_nodeName);
 			s.addChar(">".code);
 		case Xml.PCData:
-			s.add(_nodeValue);
+			s.add(StringTools.htmlEscape(_nodeValue));
 		case Xml.CData:
 			s.add("<![CDATA[");
 			s.add(_nodeValue);
@@ -396,7 +393,7 @@ enum XmlType {
 			s.add("<!DOCTYPE ");
 			s.add(_nodeValue);
 			s.add(">");
-		case Xml.Prolog:
+		case Xml.ProcessingInstruction:
 			s.add("<?");
 			s.add(_nodeValue);
 			s.add("?>");
@@ -409,14 +406,14 @@ enum XmlType {
 		CData =  Type.createEnum(XmlType,"__");
 		Comment = Type.createEnum(XmlType,"__");
 		DocType = Type.createEnum(XmlType,"__");
-		Prolog =  Type.createEnum(XmlType,"__");
+		ProcessingInstruction =  Type.createEnum(XmlType,"__");
 		Document = Type.createEnum(XmlType,"__");
 		__global__.__hxcpp_enum_force(PCData , "pcdata", 0);
 		__global__.__hxcpp_enum_force(Element , "element", 1);
 		__global__.__hxcpp_enum_force(CData , "cdata", 2);
 		__global__.__hxcpp_enum_force(Comment , "comment", 3);
 		__global__.__hxcpp_enum_force(DocType , "doctype", 4);
-		__global__.__hxcpp_enum_force(Prolog , "prolog", 5);
+		__global__.__hxcpp_enum_force(ProcessingInstruction , "processingInstruction", 5);
 		__global__.__hxcpp_enum_force(Document , "document", 6);
 	}
 

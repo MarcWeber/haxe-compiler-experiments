@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package neko.net;
 
@@ -28,12 +25,12 @@ private typedef ThreadInfos = {
 	var id : Int;
 	var t : neko.vm.Thread;
 	var p : neko.net.Poll;
-	var socks : Array<neko.net.Socket>;
+	var socks : Array<sys.net.Socket>;
 }
 
 private typedef ClientInfos<Client> = {
 	var client : Client;
-	var sock : neko.net.Socket;
+	var sock : sys.net.Socket;
 	var thread : ThreadInfos;
 	var buf : haxe.io.Bytes;
 	var bufpos : Int;
@@ -42,7 +39,7 @@ private typedef ClientInfos<Client> = {
 class ThreadServer<Client,Message> {
 
 	var threads : Array<ThreadInfos>;
-	var sock : neko.net.Socket;
+	var sock : sys.net.Socket;
 	var worker : neko.vm.Thread;
 	var timer : neko.vm.Thread;
 	public var listen : Int;
@@ -57,11 +54,11 @@ class ThreadServer<Client,Message> {
 
 	public function new() {
 		threads = new Array();
-		nthreads = if( neko.Sys.systemName() == "Windows" ) 150 else 10;
+		nthreads = if( Sys.systemName() == "Windows" ) 150 else 10;
 		messageHeaderSize = 1;
 		listen = 10;
 		connectLag = 0.5;
-		errorOutput = neko.io.File.stderr();
+		errorOutput = Sys.stderr();
 		initialBufferSize = (1 << 10);
 		maxBufferSize = (1 << 16);
 		maxSockPerThread = 64;
@@ -101,7 +98,7 @@ class ThreadServer<Client,Message> {
 				break;
 			pos += m.bytes;
 			len -= m.bytes;
-			work(callback(clientMessage,c.client,m.msg));
+			work(clientMessage.bind(c.client,m.msg));
 		}
 		if( pos > 0 )
 			c.buf.blit(0,c.buf,pos,len);
@@ -118,18 +115,18 @@ class ThreadServer<Client,Message> {
 					t.socks.remove(s);
 					if( !Std.is(e,haxe.io.Eof) && !Std.is(e,haxe.io.Error) )
 						logError(e);
-					work(callback(doClientDisconnected,s,infos.client));
+					work(doClientDisconnected.bind(s,infos.client));
 				}
 			}
 		while( true ) {
-			var m : { s : neko.net.Socket, cnx : Bool } = neko.vm.Thread.readMessage(t.socks.length == 0);
+			var m : { s : sys.net.Socket, cnx : Bool } = neko.vm.Thread.readMessage(t.socks.length == 0);
 			if( m == null )
 				break;
 			if( m.cnx )
 				t.socks.push(m.s);
 			else if( t.socks.remove(m.s) ) {
 				var infos : ClientInfos<Client> = m.s.custom;
-				work(callback(doClientDisconnected,m.s,infos.client));
+				work(doClientDisconnected.bind(m.s,infos.client));
 			}
 		}
 	}
@@ -160,23 +157,36 @@ class ThreadServer<Client,Message> {
 	}
 
 	function logError( e : Dynamic ) {
-		var stack = haxe.Stack.exceptionStack();
+		var stack = haxe.CallStack.exceptionStack();
 		if( neko.vm.Thread.current() == worker )
 			onError(e,stack);
 		else
-			work(callback(onError,e,stack));
+			work(onError.bind(e,stack));
 	}
 
-	function addClient( sock : neko.net.Socket ) {
-		var infos : ClientInfos<Client> = {
-			thread : threads[Std.random(nthreads)],
-			client : clientConnected(sock),
-			sock : sock,
-			buf : haxe.io.Bytes.alloc(initialBufferSize),
-			bufpos : 0,
-		};
-		sock.custom = infos;
-		infos.thread.t.sendMessage({ s : sock, cnx : true });
+	function addClient( sock : sys.net.Socket ) {
+		var start = Std.random(nthreads);
+		for( i in 0...nthreads ) {
+			var t = threads[(start + i)%nthreads];
+			if( t.socks.length < maxSockPerThread ) {
+				var infos : ClientInfos<Client> = {
+					thread : t,
+					client : clientConnected(sock),
+					sock : sock,
+					buf : haxe.io.Bytes.alloc(initialBufferSize),
+					bufpos : 0,
+				};
+				sock.custom = infos;
+				infos.thread.t.sendMessage({ s : sock, cnx : true });
+				return;
+			}
+		}
+		refuseClient(sock);
+	}
+
+	function refuseClient( sock : sys.net.Socket) {
+		// we have reached maximum number of active clients
+		sock.close();
 	}
 
 	function runTimer() {
@@ -198,18 +208,18 @@ class ThreadServer<Client,Message> {
 				p : new neko.net.Poll(maxSockPerThread),
 			};
 			threads.push(t);
-			t.t = neko.vm.Thread.create(callback(runThread,t));
+			t.t = neko.vm.Thread.create(runThread.bind(t));
 		}
 	}
 
-	public function addSocket( s : neko.net.Socket ) {
+	public function addSocket( s : sys.net.Socket ) {
 		s.setBlocking(false);
-		work(callback(addClient,s));
+		work(addClient.bind(s));
 	}
 
 	public function run( host, port ) {
-		sock = new neko.net.Socket();
-		sock.bind(new neko.net.Host(host),port);
+		sock = new sys.net.Socket();
+		sock.bind(new sys.net.Host(host),port);
 		sock.listen(listen);
 		init();
 		while( true ) {
@@ -221,7 +231,7 @@ class ThreadServer<Client,Message> {
 		}
 	}
 
-	public function sendData( s : neko.net.Socket, data : String ) {
+	public function sendData( s : sys.net.Socket, data : String ) {
 		try {
 			s.write(data);
 		} catch( e : Dynamic ) {
@@ -229,7 +239,7 @@ class ThreadServer<Client,Message> {
 		}
 	}
 
-	public function stopClient( s : neko.net.Socket ) {
+	public function stopClient( s : sys.net.Socket ) {
 		var infos : ClientInfos<Client> = s.custom;
 		try s.shutdown(true,true) catch( e : Dynamic ) { };
 		infos.thread.t.sendMessage({ s : s, cnx : false });
@@ -239,11 +249,11 @@ class ThreadServer<Client,Message> {
 
 	public dynamic function onError( e : Dynamic, stack ) {
 		var estr = try Std.string(e) catch( e2 : Dynamic ) "???" + try "["+Std.string(e2)+"]" catch( e : Dynamic ) "";
-		errorOutput.writeString( estr + "\n" + haxe.Stack.toString(stack) );
+		errorOutput.writeString( estr + "\n" + haxe.CallStack.toString(stack) );
 		errorOutput.flush();
 	}
 
-	public dynamic function clientConnected( s : neko.net.Socket ) : Client {
+	public dynamic function clientConnected( s : sys.net.Socket ) : Client {
 		return null;
 	}
 

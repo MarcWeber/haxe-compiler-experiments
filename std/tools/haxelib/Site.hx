@@ -1,15 +1,36 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 package tools.haxelib;
 import tools.haxelib.SiteDb;
 import haxe.rtti.CType;
 
 class Site {
 
-	static var db : neko.db.Connection;
+	static var db : sys.db.Connection;
 
 	static var CWD = neko.Web.getCwd();
 	static var DB_FILE = CWD+"haxelib.db";
 	public static var TMP_DIR = CWD+"tmp";
-	public static var REP_DIR = CWD+Datas.REPOSITORY;
+	public static var REP_DIR = CWD+Data.REPOSITORY;
 
 	static function setup() {
 		SiteDb.create(db);
@@ -22,16 +43,16 @@ class Site {
 	}
 
 	static function run() {
-		if( !neko.FileSystem.exists(TMP_DIR) )
-			neko.FileSystem.createDirectory(TMP_DIR);
-		if( !neko.FileSystem.exists(REP_DIR) )
-			neko.FileSystem.createDirectory(REP_DIR);
+		if( !sys.FileSystem.exists(TMP_DIR) )
+			sys.FileSystem.createDirectory(TMP_DIR);
+		if( !sys.FileSystem.exists(REP_DIR) )
+			sys.FileSystem.createDirectory(REP_DIR);
 
 		var ctx = new haxe.remoting.Context();
 		ctx.addObject("api",new SiteApi(db));
 		if( haxe.remoting.HttpConnection.handleRequest(ctx) )
 			return;
-		if( neko.Sys.args()[0] == "setup" ) {
+		if( Sys.args()[0] == "setup" ) {
 			setup();
 			neko.Lib.print("Setup done\n");
 			return;
@@ -42,7 +63,7 @@ class Site {
 		neko.Web.parseMultipart(function(p,filename) {
 			if( p == "file" ) {
 				sid = Std.parseInt(filename);
-				file = neko.io.File.write(TMP_DIR+"/"+sid+".tmp",true);
+				file = sys.io.File.write(TMP_DIR+"/"+sid+".tmp",true);
 			} else
 				throw p+" not accepted";
 		},function(data,pos,len) {
@@ -58,12 +79,12 @@ class Site {
 	}
 
 	static function display() {
-		var data = neko.io.File.getContent(CWD + "website.mtt");
+		var data = sys.io.File.getContent(CWD + "website.mtt");
 		var page = new haxe.Template(data);
 		var ctx : Dynamic = {};
 		var macros = {
 			download : function( res, p, v ) {
-				return "/"+Datas.REPOSITORY+"/"+Datas.fileName(res(p).name,res(v).name);
+				return "/"+Data.REPOSITORY+"/"+Data.fileName(res(p).name,res(v).name);
 			}
 		};
 		if( fillContent(ctx) )
@@ -195,7 +216,7 @@ class Site {
 			root.addChild(e);
 			return e;
 		}
-		neko.Sys.setTimeLocale("en_US.UTF8");
+		Sys.setTimeLocale("en_US.UTF8");
 		var url = "http://"+neko.Web.getClientHeader("Host");
 		var rss = Xml.createElement("rss");
 		rss.set("version","2.0");

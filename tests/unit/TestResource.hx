@@ -4,7 +4,6 @@ class TestResource extends Test {
 
 	static var STR = "Héllo World !";
 
-	#if !as3
 	function testResources() {
 		var names = haxe.Resource.listNames();
 		eq( names.length, 2 );
@@ -31,18 +30,17 @@ class TestResource extends Test {
 		for( i in 0...lasts.length )
 			eq( b.get(b.length - lasts.length + i), lasts[i] );
 	}
-	#end
 
 	#if neko
 	static function main() {
-		var ch = neko.io.File.write("res1.txt",true);
+		var ch = sys.io.File.write("res1.txt",true);
 		ch.writeString(STR);
 		ch.close();
-		var ch = neko.io.File.write("res2.bin",true);
+		var ch = sys.io.File.write("res2.bin",true);
 		ch.writeString("Héllo");
 		ch.writeByte(0);
 		ch.writeString("World");
-		ch.writeInt31(0);
+		ch.writeInt32(0);
 		ch.writeString("!");
 		ch.close();
 	}

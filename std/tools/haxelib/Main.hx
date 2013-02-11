@@ -1,4 +1,26 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 package tools.haxelib;
+import haxe.zip.Reader;
 
 enum Answer {
 	Yes;
@@ -25,9 +47,9 @@ class Progress extends haxe.io.Output {
 	function bytes(n) {
 		cur += n;
 		if( max == null )
-			neko.Lib.print(cur+" bytes\r");
+			Sys.print(cur+" bytes\r");
 		else
-			neko.Lib.print(cur+"/"+max+" ("+Std.int((cur*100.0)/max)+"%)\r");
+			Sys.print(cur+"/"+max+" ("+Std.int((cur*100.0)/max)+"%)\r");
 	}
 
 	public override function writeByte(c) {
@@ -48,7 +70,7 @@ class Progress extends haxe.io.Output {
 		var speed = (cur / time) / 1024;
 		time = Std.int(time * 10) / 10;
 		speed = Std.int(speed * 10) / 10;
-		neko.Lib.print("Download complete : "+cur+" bytes in "+time+"s ("+speed+"KB/s)\n");
+		Sys.print("Download complete : "+cur+" bytes in "+time+"s ("+speed+"KB/s)\n");
 	}
 
 	public override function prepare(m) {
@@ -83,14 +105,14 @@ class ProgressIn extends haxe.io.Input {
 
 	function doRead( nbytes : Int ) {
 		pos += nbytes;
-		neko.Lib.print( Std.int((pos * 100.0) / tot) + "%\r" );
+		Sys.print( Std.int((pos * 100.0) / tot) + "%\r" );
 	}
 
 }
 
 class Main {
 
-	static var VERSION = 103;
+	static var VERSION = 104;
 	static var REPNAME = "lib";
 	static var SERVER = {
 		host : "lib.haxe.org",
@@ -106,11 +128,12 @@ class Main {
 	var site : SiteProxy;
 
 	function new() {
-		args = neko.Sys.args();
+		args = Sys.args();
 		commands = new List();
 		addCommand("install",install,"install a given library");
 		addCommand("list",list,"list all installed libraries",false);
 		addCommand("upgrade",upgrade,"upgrade all installed libraries");
+		addCommand("update",update,"update a single library");
 		addCommand("remove",remove,"remove a given library/version",false);
 		addCommand("set",set,"set the current version for a library",false);
 		addCommand("search",search,"list libraries matching a word");
@@ -124,6 +147,7 @@ class Main {
 		addCommand("run",run,"run the specified library with parameters",false);
 		addCommand("test",test,"install the specified package localy",false);
 		addCommand("dev",dev,"set the development directory for a given library",false);
+		addCommand("git",git,"uses git repository as library");
 		initSite();
 	}
 
@@ -135,22 +159,22 @@ class Main {
 	function param( name, ?passwd ) {
 		if( args.length > argcur )
 			return args[argcur++];
-		neko.Lib.print(name+" : ");
+		Sys.print(name+" : ");
 		if( passwd ) {
 			var s = new StringBuf();
 			var c;
-			while( (c = neko.io.File.getChar(false)) != 13 )
+			while( (c = Sys.getChar(false)) != 13 )
 				s.addChar(c);
 			print("");
 			return s.toString();
 		}
-		return neko.io.File.stdin().readLine();
+		return Sys.stdin().readLine();
 	}
 
 	function ask( question ) {
 		while( true ) {
-			neko.Lib.print(question+" [y/n/a] ? ");
-			switch( neko.io.File.stdin().readLine() ) {
+			Sys.print(question+" [y/n/a] ? ");
+			switch( Sys.stdin().readLine() ) {
 			case "n": return No;
 			case "y": return Yes;
 			case "a": return Always;
@@ -172,12 +196,12 @@ class Main {
 	function usage() {
 		var vmin = Std.string(VERSION % 100);
 		var ver = Std.int(VERSION/100) + "." + if( vmin.length == 1 ) "0"+vmin else vmin;
-		print("Haxe Library Manager "+ver+" - (c)2006 Motion-Twin");
+		print("Haxe Library Manager "+ver+" - (c)2006-2012 Haxe Foundation");
 		print(" Usage : haxelib [command] [options]");
 		print(" Commands :");
 		for( c in commands )
 			print("  "+c.name+" : "+c.doc);
-		neko.Sys.exit(1);
+		Sys.exit(1);
 	}
 
 	function process() {
@@ -226,12 +250,12 @@ class Main {
 						print("If you don't have an internet connection or if you are behing a proxy");
 						print("please download manually the file from http://lib.haxe.org/files");
 						print("and run 'haxelib test <file>' to install the Library.");
-						neko.Sys.exit(1);
+						Sys.exit(1);
 					}
 					if( debug )
 						neko.Lib.rethrow(e);
 					print(Std.string(e));
-					neko.Sys.exit(1);
+					Sys.exit(1);
 				}
 				return;
 			}
@@ -291,16 +315,16 @@ class Main {
 		var pass2 = param("Confirm",true);
 		if( pass != pass2 )
 			throw "Password does not match";
-		pass = haxe.Md5.encode(pass);
+		pass = haxe.crypto.Md5.encode(pass);
 		site.register(name,pass,email,fullname);
 		return pass;
 	}
 
 	function submit() {
 		var file = param("Package");
-		var data = neko.io.File.getBytes(file);
-		var zip = neko.zip.Reader.readZip(new haxe.io.BytesInput(data));
-		var infos = Datas.readInfos(zip,true);
+		var data = sys.io.File.getBytes(file);
+		var zip = Reader.readZip(new haxe.io.BytesInput(data));
+		var infos = Data.readInfos(zip,true);
 		var user = infos.developers.first();
 		var password;
 		if( site.isNewUser(user) ) {
@@ -310,7 +334,7 @@ class Main {
 		} else {
 			if( infos.developers.length > 1 )
 				user = param("User");
-			password = haxe.Md5.encode(param("Password",true));
+			password = haxe.crypto.Md5.encode(param("Password",true));
 			if( !site.checkPassword(user,password) )
 				throw "Invalid password for "+user;
 		}
@@ -359,7 +383,7 @@ class Main {
 
 	function install() {
 		var prj = param("Library name");
-		if( neko.FileSystem.exists(prj) && !neko.FileSystem.isDirectory(prj) ) {
+		if( sys.FileSystem.exists(prj) && !sys.FileSystem.isDirectory(prj) ) {
 			if( !StringTools.endsWith(prj,".zip") )
 				throw "Local file to install must be a zip";
 			doInstallFile(prj,true,true);
@@ -385,21 +409,21 @@ class Main {
 		var rep = getRepository();
 
 		// check if exists already
-		if( neko.FileSystem.exists(rep+Datas.safe(project)+"/"+Datas.safe(version)) ) {
+		if( sys.FileSystem.exists(rep+Data.safe(project)+"/"+Data.safe(version)) ) {
 			print("You already have "+project+" version "+version+" installed");
 			setCurrent(project,version,true);
 			return;
 		}
 
 		// download to temporary file
-		var filename = Datas.fileName(project,version);
+		var filename = Data.fileName(project,version);
 		var filepath = rep+filename;
-		var out = neko.io.File.write(filepath,true);
+		var out = sys.io.File.write(filepath,true);
 		var progress = new Progress(out);
-		var h = new haxe.Http(siteUrl+Datas.REPOSITORY+"/"+filename);
+		var h = new haxe.Http(siteUrl+Data.REPOSITORY+"/"+filename);
 		h.onError = function(e) {
 			progress.close();
-			neko.FileSystem.deleteFile(filepath);
+			sys.FileSystem.deleteFile(filepath);
 			throw e;
 		};
 		print("Downloading "+filename+"...");
@@ -412,29 +436,29 @@ class Main {
 	function doInstallFile(filepath,setcurrent,?nodelete) {
 
 		// read zip content
-		var f = neko.io.File.read(filepath,true);
-		var zip = neko.zip.Reader.readZip(f);
+		var f = sys.io.File.read(filepath,true);
+		var zip = Reader.readZip(f);
 		f.close();
-		var infos = Datas.readInfos(zip,false);
+		var infos = Data.readInfos(zip,false);
 
 		// create directories
-		var pdir = getRepository() + Datas.safe(infos.project);
+		var pdir = getRepository() + Data.safe(infos.project);
 		safeDir(pdir);
 		pdir += "/";
-		var target = pdir + Datas.safe(infos.version);
+		var target = pdir + Data.safe(infos.version);
 		safeDir(target);
 		target += "/";
 
 		// locate haxelib.xml base path
 		var basepath = null;
 		for( f in zip ) {
-			if( StringTools.endsWith(f.fileName,Datas.XML) ) {
-				basepath = f.fileName.substr(0,f.fileName.length - Datas.XML.length);
+			if( StringTools.endsWith(f.fileName,Data.XML) ) {
+				basepath = f.fileName.substr(0,f.fileName.length - Data.XML.length);
 				break;
 			}
 		}
 		if( basepath == null )
-			throw "No "+Datas.XML+" found";
+			throw "No "+Data.XML+" found";
 
 		// unzip content
 		for( zipfile in zip ) {
@@ -458,24 +482,20 @@ class Main {
 				}
 				path += file;
 				print("  Install "+path);
-				var data = neko.zip.Reader.unzip(zipfile);
-				var f = neko.io.File.write(target+path,true);
-				f.write(data);
-				f.close();
+				var data = Reader.unzip(zipfile);
+				sys.io.File.saveBytes(target+path,data);
 			}
 		}
 
 		// set current version
-		if( setcurrent || !neko.FileSystem.exists(pdir+".current") ) {
-			var f = neko.io.File.write(pdir+".current",true);
-			f.writeString(infos.version);
-			f.close();
+		if( setcurrent || !sys.FileSystem.exists(pdir+".current") ) {
+			sys.io.File.saveContent(pdir+".current",infos.version);
 			print("  Current version is now "+infos.version);
 		}
 
 		// end
 		if( !nodelete )
-			neko.FileSystem.deleteFile(filepath);
+			sys.FileSystem.deleteFile(filepath);
 		print("Done");
 
 		// process dependencies
@@ -488,65 +508,92 @@ class Main {
 	}
 
 	function safeDir( dir ) {
-		if( neko.FileSystem.exists(dir) ) {
-			if( !neko.FileSystem.isDirectory(dir) )
+		if( sys.FileSystem.exists(dir) ) {
+			if( !sys.FileSystem.isDirectory(dir) )
 				throw ("A file is preventing "+dir+" to be created");
 			return false;
 		}
 		try {
-			neko.FileSystem.createDirectory(dir);
+			sys.FileSystem.createDirectory(dir);
 		} catch( e : Dynamic ) {
 			throw "You don't have enough user rights to create the directory "+dir;
 		}
 		return true;
 	}
 
+	function safeDelete( file ) {
+		try {
+			sys.FileSystem.deleteFile(file);
+			return true;
+		} catch (e:Dynamic) {
+			if( Sys.systemName() == "Windows") {
+				try {
+					Sys.command("attrib -R \"" +file+ "\"");
+					sys.FileSystem.deleteFile(file);
+					return true;
+				} catch (e:Dynamic) {
+				}
+			}
+			return false;
+		}
+	}
+
 	function getRepository( ?setup : Bool ) {
-		var sys = neko.Sys.systemName();
-		if( sys == "Windows" ) {
-			var haxepath = neko.Sys.getEnv("HAXEPATH");
-			if( haxepath == null )
-				throw "HAXEPATH environment variable not defined, please run haxesetup.exe first";
+		var win = Sys.systemName() == "Windows";
+		var haxepath = Sys.getEnv("HAXEPATH");
+		if( haxepath != null ) {
 			var last = haxepath.charAt(haxepath.length - 1);
 			if( last != "/" && last != "\\" )
 				haxepath += "/";
-			var rep = haxepath+REPNAME;
-			try {
-				safeDir(rep);
-			} catch( e : Dynamic ) {
-				throw "The directory defined by HAXEPATH does not exist, please run haxesetup.exe again";
-			}
-			return rep+"\\";
 		}
-		var config = neko.Sys.getEnv("HOME")+"/.haxelib";
+		var config_file;
+		if( win )
+			config_file = Sys.getEnv("HOMEDRIVE") + Sys.getEnv("HOMEPATH");
+		else
+			config_file = Sys.getEnv("HOME");
+		config_file += "/.haxelib";
 		var rep = try
-			neko.io.File.getContent(config)
+			sys.io.File.getContent(config_file)
 		catch( e : Dynamic ) try
-			neko.io.File.getContent("/etc/.haxelib")
-		catch( e : Dynamic )
-			if( setup )
-				"/usr/lib/haxe/"+REPNAME;
-			else
+			sys.io.File.getContent("/etc/.haxelib")
+		catch( e : Dynamic ) {
+			if( setup ) {
+				(win ? haxepath : "/usr/lib/haxe/")+REPNAME;
+			} else if( win ) {
+				// Windows have a default directory (no need for setup)
+				if( haxepath == null )
+					throw "HAXEPATH environment variable not defined, please run haxesetup.exe first";
+				var rep = haxepath+REPNAME;
+				try {
+					safeDir(rep);
+				} catch( e : Dynamic ) {
+					throw "The directory defined by HAXEPATH does not exist, please run haxesetup.exe again";
+				}
+				return rep+"\\";
+			} else
 				throw "This is the first time you are runing haxelib. Please run haxelib setup first";
+		}
 		rep = StringTools.trim(rep);
 		if( setup ) {
-			print("Please enter haxelib repository path with write access");
-			print("Hit enter for default ("+rep+")");
+			if( args.length <= argcur ) {
+				print("Please enter haxelib repository path with write access");
+				print("Hit enter for default (" + rep + ")");
+			}
 			var line = param("Path");
 			if( line != "" )
 				rep = line;
-			if( !neko.FileSystem.exists(rep) ) {
+			if( !sys.FileSystem.exists(rep) ) {
 				try {
-					neko.FileSystem.createDirectory(rep);
+					sys.FileSystem.createDirectory(rep);
 				} catch( e : Dynamic ) {
 					print("Failed to create directory '"+rep+"' ("+Std.string(e)+"), maybe you need appropriate user rights");
-					neko.Sys.exit(1);
+					print("Check also that the parent directory exists");
+					Sys.exit(1);
 				}
 			}
-			var f = neko.io.File.write(config,true);
-			f.writeString(rep);
-			f.close();
-		} else if( !neko.FileSystem.exists(rep) )
+			rep = try sys.FileSystem.fullPath(rep) catch( e : Dynamic ) rep;
+			sys.io.File.saveContent(config_file, rep);
+		} else if( !sys.FileSystem.exists(rep) )
 			throw "haxelib Repository "+rep+" does not exists. Please run haxelib setup again";
 		return rep+"/";
 	}
@@ -560,86 +607,115 @@ class Main {
 		print(getRepository());
 	}
 
+	function getCurrent( dir ) {
+		return StringTools.trim(sys.io.File.getContent(dir + "/.current"));
+	}
+
+	function getDev( dir ) {
+		return StringTools.trim(sys.io.File.getContent(dir + "/.dev"));
+	}
+
 	function list() {
 		var rep = getRepository();
-		for( p in neko.FileSystem.readDirectory(rep) ) {
+		for( p in sys.FileSystem.readDirectory(rep) ) {
 			if( p.charAt(0) == "." )
 				continue;
 			var versions = new Array();
-			var current = neko.io.File.getContent(rep+p+"/.current");
-			var dev = try neko.io.File.getContent(rep+p+"/.dev") catch( e : Dynamic ) null;
-			for( v in neko.FileSystem.readDirectory(rep+p) ) {
+			var current = getCurrent(rep + p);
+			var dev = try StringTools.trim(sys.io.File.getContent(rep+p+"/.dev")) catch( e : Dynamic ) null;
+			for( v in sys.FileSystem.readDirectory(rep+p) ) {
 				if( v.charAt(0) == "." )
 					continue;
-				v = Datas.unsafe(v);
+				v = Data.unsafe(v);
 				if( dev == null && v == current )
 					v = "["+v+"]";
 				versions.push(v);
 			}
 			if( dev != null )
 				versions.push("[dev:"+dev+"]");
-			print(Datas.unsafe(p) + ": "+versions.join(" "));
+			print(Data.unsafe(p) + ": "+versions.join(" "));
 		}
 	}
 
 	function upgrade() {
-		var rep = getRepository();
-		var prompt = true;
-		var update = false;
-		for( p in neko.FileSystem.readDirectory(rep) ) {
-			if( p.charAt(0) == "." || !neko.FileSystem.isDirectory(rep+"/"+p) )
+		var state = { rep : getRepository(), prompt : true, updated : false };
+		for( p in sys.FileSystem.readDirectory(state.rep) ) {
+			if( p.charAt(0) == "." || !sys.FileSystem.isDirectory(state.rep+"/"+p) )
 				continue;
-			var p = Datas.unsafe(p);
-			print("Checking "+p);
-			var inf = try site.infos(p) catch( e : Dynamic ) { neko.Lib.println(e); continue; };
-			if( !neko.FileSystem.exists(rep+Datas.safe(p)+"/"+Datas.safe(inf.curversion)) ) {
-				if( prompt )
-					switch ask("Upgrade "+p+" to "+inf.curversion) {
-					case Yes:
-					case Always: prompt = false;
-					case No: continue;
-					}
-				doInstall(p,inf.curversion,true);
-				update = true;
-			} else
-				setCurrent(p,inf.curversion,true);
+			var p = Data.unsafe(p);
+			print("Checking " + p);
+			doUpdate(p,state);
 		}
-		if( update )
+		if( state.updated )
 			print("Done");
 		else
 			print("All libraries are up-to-date");
 	}
 
+	function doUpdate( p : String, state ) {
+		var rep = state.rep;
+		if( sys.FileSystem.exists(rep + "/" + p + "/git") && sys.FileSystem.isDirectory(rep + "/" + p + "/git") ) {
+			checkGit();
+			var oldCwd = Sys.getCwd();
+			Sys.setCwd(rep + "/" + p + "/git");
+			Sys.command("git pull");
+			// TODO: update haxelib.xml version?
+			Sys.setCwd(oldCwd);
+			state.updated = true;
+		} else {
+			var inf = try site.infos(p) catch( e : Dynamic ) { Sys.println(e); return; };
+			if( !sys.FileSystem.exists(rep+Data.safe(p)+"/"+Data.safe(inf.curversion)) ) {
+				if( state.prompt )
+					switch ask("Upgrade "+p+" to "+inf.curversion) {
+					case Yes:
+					case Always: state.prompt = false;
+					case No:
+						return;
+					}
+				doInstall(p,inf.curversion,true);
+				state.updated = true;
+			} else
+				setCurrent(p, inf.curversion, true);
+		}
+	}
+
+	function update() {
+		var prj = param("Library");
+		var state = { rep : getRepository(), prompt : false, updated : false };
+		doUpdate(prj,state);
+		if( !state.updated )
+			print(prj + " is up to date");
+	}
+
 	function deleteRec(dir) {
-		for( p in neko.FileSystem.readDirectory(dir) ) {
+		for( p in sys.FileSystem.readDirectory(dir) ) {
 			var path = dir+"/"+p;
-			if( neko.FileSystem.isDirectory(path) )
+			if( sys.FileSystem.isDirectory(path) )
 				deleteRec(path);
 			else
-				neko.FileSystem.deleteFile(path);
+				safeDelete(path);
 		}
-		neko.FileSystem.deleteDirectory(dir);
+		sys.FileSystem.deleteDirectory(dir);
 	}
 
 	function remove() {
 		var prj = param("Library");
 		var version = paramOpt();
 		var rep = getRepository();
-		var pdir = rep + Datas.safe(prj);
-
+		var pdir = rep + Data.safe(prj);
 		if( version == null ) {
-			if( !neko.FileSystem.exists(pdir) )
+			if( !sys.FileSystem.exists(pdir) )
 				throw "Library "+prj+" is not installed";
 			deleteRec(pdir);
 			print("Library "+prj+" removed");
 			return;
 		}
 
-		var vdir = pdir + "/" + Datas.safe(version);
-		if( !neko.FileSystem.exists(vdir) )
+		var vdir = pdir + "/" + Data.safe(version);
+		if( !sys.FileSystem.exists(vdir) )
 			throw "Library "+prj+" does not have version "+version+" installed";
 
-		var cur = neko.io.File.getContent(pdir+"/.current");
+		var cur = getCurrent(pdir);
 		if( cur == version )
 			throw "Can't remove current version of library "+prj;
 		deleteRec(vdir);
@@ -653,28 +729,27 @@ class Main {
 	}
 
 	function setCurrent( prj : String, version : String, doAsk : Bool ) {
-		var pdir = getRepository() + Datas.safe(prj);
-		var vdir = pdir + "/" + Datas.safe(version);
-		if( !neko.FileSystem.exists(vdir) )
+		var pdir = getRepository() + Data.safe(prj);
+		var vdir = pdir + "/" + Data.safe(version);
+		if( !sys.FileSystem.exists(vdir) )
 			throw "Library "+prj+" version "+version+" is not installed";
-		var current = pdir+"/.current";
-		if( neko.io.File.getContent(current) == version )
+		if( getCurrent(pdir) == version )
 			return;
 		if( doAsk && ask("Set "+prj+" to version "+version) == No )
 			return;
-		var f = neko.io.File.write(current,true);
-		f.writeString(version);
-		f.close();
+		sys.io.File.saveContent(pdir+"/.current",version);
 		print("Library "+prj+" current version is now "+version);
 	}
 
 	function checkRec( prj : String, version : String, l : List<{ project : String, version : String }> ) {
-		var pdir = getRepository() + Datas.safe(prj);
-		if( !neko.FileSystem.exists(pdir) )
+		var pdir = getRepository() + Data.safe(prj);
+		if( !sys.FileSystem.exists(pdir) )
 			throw "Library "+prj+" is not installed : run 'haxelib install "+prj+"'";
-		var version = if( version != null ) version else neko.io.File.getContent(pdir+"/.current");
-		var vdir = pdir + "/" + Datas.safe(version);
-		if( !neko.FileSystem.exists(vdir) )
+		var version = if( version != null ) version else getCurrent(pdir);
+		var vdir = pdir + "/" + Data.safe(version);
+		if( StringTools.endsWith(vdir, "dev") )
+			vdir = getDev(pdir);
+		if( !sys.FileSystem.exists(vdir) )
 			throw "Library "+prj+" version "+version+" is not installed";
 		for( p in l )
 			if( p.project == prj ) {
@@ -683,8 +758,8 @@ class Main {
 				throw "Library "+prj+" has two version included "+version+" and "+p.version;
 			}
 		l.add({ project : prj, version : version });
-		var xml = neko.io.File.getContent(vdir+"/haxelib.xml");
-		var inf = Datas.readData(xml,false);
+		var xml = sys.io.File.getContent(vdir+"/haxelib.xml");
+		var inf = Data.readData(xml,false);
 		for( d in inf.dependencies )
 			checkRec(d.project,if( d.version == "" ) null else d.version,l);
 	}
@@ -697,24 +772,31 @@ class Main {
 		}
 		var rep = getRepository();
 		for( d in list ) {
-			var pdir = Datas.safe(d.project)+"/"+Datas.safe(d.version)+"/";
+			var pdir = Data.safe(d.project)+"/"+Data.safe(d.version)+"/";
 			var dir = rep + pdir;
 			try {
-				dir = neko.io.File.getContent(rep+Datas.safe(d.project)+"/.dev");
+				dir = getDev(rep+Data.safe(d.project));
 				if( dir.length == 0 || (dir.charAt(dir.length-1) != '/' && dir.charAt(dir.length-1) != '\\') )
 					dir += "/";
 				pdir = dir;
 			} catch( e : Dynamic ) {
 			}
 			var ndir = dir + "ndll";
-			if( neko.FileSystem.exists(ndir) ) {
-				var sysdir = ndir+"/"+neko.Sys.systemName();
-				if( !neko.FileSystem.exists(sysdir) )
+			if( sys.FileSystem.exists(ndir) ) {
+				var sysdir = ndir+"/"+Sys.systemName();
+				var is64 = neko.Lib.load("std", "sys_is64", 0)();
+				if( is64 ) sysdir += "64";
+				if( !sys.FileSystem.exists(sysdir) )
 					throw "Library "+d.project+" version "+d.version+" does not have a neko dll for your system";
-				neko.Lib.println("-L "+pdir+"ndll/");
+				Sys.println("-L "+pdir+"ndll/");
 			}
-			neko.Lib.println(dir);
-			neko.Lib.println("-D "+d.project);
+			try {
+				var f = sys.io.File.getContent(dir + "extraParams.hxml");
+				Sys.println(StringTools.trim(f));
+			} catch( e : Dynamic ) {
+			}
+			Sys.println(dir);
+			Sys.println("-D "+d.project);
 		}
 	}
 
@@ -722,45 +804,134 @@ class Main {
 		var rep = getRepository();
 		var project = param("Library");
 		var dir = paramOpt();
-		var proj = rep + Datas.safe(project);
-		if( !neko.FileSystem.exists(proj) ) {
-			neko.FileSystem.createDirectory(proj);
-			var f = neko.io.File.write(proj + "/.current", false);
-			f.writeString("dev");
-			f.close();
+		var proj = rep + Data.safe(project);
+		if( !sys.FileSystem.exists(proj) ) {
+			sys.FileSystem.createDirectory(proj);
+			sys.io.File.saveContent(proj + "/.current", "dev");
 		}
 		var devfile = proj+"/.dev";
 		if( dir == null ) {
-			if( neko.FileSystem.exists(devfile) )
-				neko.FileSystem.deleteFile(devfile);
+			if( sys.FileSystem.exists(devfile) )
+				sys.FileSystem.deleteFile(devfile);
 			print("Development directory disabled");
 		} else {
-			var f = neko.io.File.write(devfile,false);
-			f.writeString(dir);
-			f.close();
-			print("Development directory set to "+dir);
+			try {
+				sys.io.File.saveContent(devfile, dir);
+				print("Development directory set to "+dir);
+			}
+			catch (e:Dynamic) {
+				print("Could not write to " +proj + "/.dev");
+			}
 		}
+	}
+
+	function checkGit() {
+		var gitExists = function()
+			try { command("git", []); return true; } catch (e:Dynamic) return false;
+		if( gitExists() )
+			return;
+		// if we have already msys git/cmd in our PATH
+		var match = ~/(.*)git([\\|\/])cmd$/ ;
+		for (path in Sys.getEnv("PATH").split(";"))	{
+			if (match.match(path.toLowerCase()))
+			{
+				var newPath = match.matched(1) + "git" +match.matched(2) + "bin";
+				Sys.putEnv("PATH", Sys.getEnv("PATH") + ";" +newPath);
+			}
+		}
+		if( gitExists() )
+			return;
+		// look at a few default paths
+		for( path in ["C:\\Program Files (x86)\\Git\\bin","C:\\Progra~1\\Git\\bin"] )
+			if( sys.FileSystem.exists(path) ) {
+				Sys.putEnv("PATH", Sys.getEnv("PATH") + ";" +path);
+				if( gitExists() )
+					return;
+			}
+		print("Could not execute git, please make sure it is installed and available in your PATH.");
+	}
+
+	function git() {
+		var libName = param("Library name");
+		var rep = getRepository();
+		var libPath = rep + Data.safe(libName) + "/git";
+
+		if( sys.FileSystem.exists(libPath) ) {
+			var state = { rep : rep, prompt : false, updated : false };
+			doUpdate(libName,state);
+			if( !state.updated )
+				print("You already have a git version of "+libName+" installed");
+			return;
+		}
+
+		var gitPath = param("Git path");
+		var subDir = paramOpt();
+
+		var match = ~/@([0-9]+)/;
+		var rev = if (match.match(gitPath) && match.matchedRight() == "")
+		{
+			gitPath = match.matchedLeft();
+			match.matched(1);
+		}
+		else
+			null;
+
+		print("Installing " +libName + " from " +gitPath);
+		checkGit();
+
+		if( Sys.command("git clone \"" +gitPath + "\" \"" +libPath + "\"") != 0 ) {
+			print("Could not clone git repository");
+			return;
+		}
+		Sys.setCwd(libPath);
+		if (rev != null) {
+			var ret = command("git", ["checkout", rev]);
+			if (ret.code != 0)
+			{
+				print("Could not checkout revision: " +ret.out);
+				// TODO: We might have to get rid of the cloned repository here
+				return;
+			}
+		}
+		var revision = command("git", ["rev-parse", "HEAD"]).out;
+
+		var devPath = libPath + (subDir == null ? "" : "/" + subDir);
+		if (!sys.FileSystem.exists(devPath +"/haxelib.xml"))
+		{
+			var haxelib = "<project name='" +libName + "' url='" +gitPath + "' license='BSD'>"
+				+"<description></description>"
+				+"<version name='" +revision + "'>Updated from git.</version>"
+				+"</project>";
+			sys.io.File.saveContent(devPath +"/haxelib.xml", haxelib);
+		}
+
+		Sys.setCwd(libPath + "/../");
+		sys.io.File.saveContent(".current", "dev");
+		sys.io.File.saveContent(".dev", devPath);
+		print("Done");
 	}
 
 	function run() {
 		var rep = getRepository();
 		var project = param("Library");
-		var pdir = rep + Datas.safe(project);
-		if( !neko.FileSystem.exists(pdir) )
+		var temp = project.split(":");
+		project = temp[0];
+		var pdir = rep + Data.safe(project);
+		if( !sys.FileSystem.exists(pdir) )
 			throw "Library "+project+" is not installed";
 		pdir += "/";
-		var version = neko.io.File.getContent(pdir+".current");
-		var dev = try neko.io.File.getContent(pdir+".dev") catch( e : Dynamic ) null;
-		var vdir = dev!=null ? dev : pdir + Datas.safe(version);
+		var version = temp[1] != null ? temp[1] : getCurrent(pdir);
+		var dev = try getDev(pdir) catch ( e : Dynamic ) null;
+		var vdir = dev!=null ? dev : pdir + Data.safe(version);
 		var rdir = vdir + "/run.n";
-		if( !neko.FileSystem.exists(rdir) )
+		if( !sys.FileSystem.exists(rdir) )
 			throw "Library "+project+" version "+version+" does not have a run script";
-		args.push(neko.Sys.getCwd());
-		neko.Sys.setCwd(vdir);
+		args.push(Sys.getCwd());
+		Sys.setCwd(vdir);
 		var cmd = "neko run.n";
 		for( i in argcur...args.length )
 			cmd += " "+escapeArg(args[i]);
-		neko.Sys.exit(neko.Sys.command(cmd));
+		Sys.exit(Sys.command(cmd));
 	}
 
 	function escapeArg( a : String ) {
@@ -774,10 +945,16 @@ class Main {
 		doInstallFile(file,true,true);
 	}
 
+	function command( cmd:String, args:Array<String> ) {
+		var p = new sys.io.Process(cmd, args);
+		var code = p.exitCode();
+		return { code:code, out: code == 0 ? p.stdout.readAll().toString() : p.stderr.readAll().toString() };
+	}
+
 	// ----------------------------------
 
 	static function print(str) {
-		neko.Lib.print(str+"\n");
+		Sys.print(str+"\n");
 	}
 
 	static function main() {

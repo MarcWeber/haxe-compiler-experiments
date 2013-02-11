@@ -8,7 +8,8 @@ class TestSerialize extends Test {
 
 	function test() {
 		// basic types
-		for( v in [null,true,false,0,1,1506,-0xABCDEF,12.3,-1e10,"hello","éé","\r\n","\n","   ",""] )
+		var values : Array<Dynamic> = [null, true, false, 0, 1, 1506, -0xABCDEF, 12.3, -1e10, "hello", "éé", "\r\n", "\n", "   ", ""];
+		for( v in values )
 			eq( id(v), v );
 
 		t( Math.isNaN(id(Math.NaN)) );
@@ -52,26 +53,52 @@ class TestSerialize extends Test {
 		haxe.Serializer.USE_ENUM_INDEX = true;
 		doTestEnums();
 
-		// hash
-		var h = new Hash();
+		// StringMap
+		var h = new haxe.ds.StringMap();
 		h.set("keya",2);
 		h.set("kéyb",-465);
 		var h2 = id(h);
-		t( Std.is(h2,Hash) );
+		t( Std.is(h2,haxe.ds.StringMap) );
 		eq( h2.get("keya"), 2 );
 		eq( h2.get("kéyb"), -465 );
 		eq( Lambda.count(h2), 2 );
 
-		// inthash
-		var h = new IntHash();
+		// IntMap
+		var h = new haxe.ds.IntMap();
 		h.set(55,2);
 		h.set(-101,-465);
 		var h2 = id(h);
-		t( Std.is(h2,IntHash) );
+		t( Std.is(h2,haxe.ds.IntMap) );
 		eq( h2.get(55), 2 );
 		eq( h2.get(-101), -465 );
 		eq( Lambda.count(h2), 2 );
 
+		// ObjectMap
+		var h = new haxe.ds.ObjectMap();
+		var a = new unit.MyAbstract.ClassWithoutHashCode(9);
+		var b = new unit.MyAbstract.ClassWithoutHashCode(8);
+		h.set(a, b);
+		h.set(b, a);
+		var h2 = id(h);
+		t(Std.is(h2, haxe.ds.ObjectMap));
+		// these are NOT the same objects
+		f(h2.exists(a));
+		f(h2.exists(b));
+		// all these should still work
+		t(h.exists(a));
+		t(h.exists(b));
+		eq(h.get(a), b);
+		eq(h.get(b), a);
+		var nothing = true;
+		for (k in h2.keys()) {
+			nothing = false;
+			t(k.i == 8 || k.i == 9);
+			t(h2.exists(k));
+			var v = h2.get(k);
+			t(v.i == 8 || v.i == 9);
+		}
+		f(nothing);
+		
 		// bytes
 		doTestBytes(haxe.io.Bytes.alloc(0));
 		doTestBytes(haxe.io.Bytes.ofString("A"));
@@ -95,7 +122,7 @@ class TestSerialize extends Test {
 		#if !cpp
 		exc(function() haxe.Unserializer.run(null));
 		#end
-		
+
 		exc(function() haxe.Unserializer.run(""));
 
 	}

@@ -1,20 +1,23 @@
 (*
- *  Haxe Compiler
- *  Copyright (c)2005 Nicolas Cannasse
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *)
 
 {
@@ -45,7 +48,8 @@ type lexer_file = {
 	mutable lline : int;
 	mutable lmaxline : int;
 	mutable llines : (int * int) list;
-	mutable lrlines : (int * int) list;
+	mutable lalines : (int * int) array;
+	mutable lstrings : int list;
 }
 
 let make_file file =
@@ -53,8 +57,9 @@ let make_file file =
 		lfile = file;
 		lline = 1;
 		lmaxline = 1;
-		llines = [];
-		lrlines = [];		
+		llines = [0,1];
+		lalines = [|0,1|];
+		lstrings = [];
 	}
 
 
@@ -74,41 +79,81 @@ let keywords =
 		Break;Return;Continue;Extends;Implements;Import;
 		Switch;Case;Default;Public;Private;Try;Untyped;
 		Catch;New;This;Throw;Extern;Enum;In;Interface;
-		Cast;Override;Dynamic;Typedef;Package;Callback;
-		Inline;Using];
+		Cast;Override;Dynamic;Typedef;Package;
+		Inline;Using;Null;True;False;Abstract;Macro];
 	h
 
 let init file =
 	let f = make_file file in
 	cur := f;
-	Hashtbl.add all_files file f
+	Hashtbl.replace all_files file f
 
 let save() =
 	!cur
 
-let restore c =	
+let restore c =
 	cur := c
 
 let newline lexbuf =
 	let cur = !cur in
-	cur.llines <- (lexeme_end lexbuf,cur.lline) :: cur.llines;	
-	cur.lline <- cur.lline + 1
+	cur.lline <- cur.lline + 1;
+	cur.llines <- (lexeme_end lexbuf,cur.lline) :: cur.llines
+
+let fmt_pos p =
+	p.pmin + (p.pmax - p.pmin) * 1000000
+
+let add_fmt_string p =
+	let file = (try
+		Hashtbl.find all_files p.pfile
+	with Not_found ->
+		let f = make_file p.pfile in
+		Hashtbl.replace all_files p.pfile f;
+		f
+	) in
+	file.lstrings <- (fmt_pos p) :: file.lstrings
+
+let fast_add_fmt_string p =
+	let cur = !cur in
+	cur.lstrings <- (fmt_pos p) :: cur.lstrings
+
+let is_fmt_string p =
+	try
+		let file = Hashtbl.find all_files p.pfile in
+		List.mem (fmt_pos p) file.lstrings
+	with Not_found ->
+		false
+
+let remove_fmt_string p =
+	try
+		let file = Hashtbl.find all_files p.pfile in
+		file.lstrings <- List.filter ((<>) (fmt_pos p)) file.lstrings
+	with Not_found ->
+		()
 
 let find_line p f =
-	let rec loop delta = function
-		| [] -> f.lmaxline, p - delta
-		| (lp,line) :: l when lp > p -> line, p - delta
-		| (lp,_) :: l -> loop lp l
-	in
+	(* rebuild cache if we have a new line *)
 	if f.lmaxline <> f.lline then begin
 		f.lmaxline <- f.lline;
-		f.lrlines <- List.rev f.llines;
+		f.lalines <- Array.of_list (List.rev f.llines);
 	end;
-	loop 0 f.lrlines
+	let rec loop min max =
+		let med = (min + max) lsr 1 in
+		let lp, line = Array.unsafe_get f.lalines med in
+		if med = min then
+			line, p - lp
+		else if lp > p then
+			loop min med
+		else
+			loop med max
+	in
+	loop 0 (Array.length f.lalines)
+
+let find_pos p =
+	let file = (try Hashtbl.find all_files p.pfile with Not_found -> make_file p.pfile) in
+	find_line p.pmin file
 
 let get_error_line p =
-	let file = (try Hashtbl.find all_files p.pfile with Not_found -> make_file p.pfile) in
-	let l, _ = find_line p.pmin file in
+	let l, _ = find_pos p in
 	l
 
 let get_error_pos printer p =
@@ -194,6 +239,7 @@ and token = parse
 	| "<<" { mk lexbuf (Binop OpShl) }
 	| "->" { mk lexbuf Arrow }
 	| "..." { mk lexbuf (Binop OpInterval) }
+	| "=>" { mk lexbuf (Binop OpArrow)}
 	| "!" { mk lexbuf (Unop Not) }
 	| "<" { mk lexbuf (Binop OpLt) }
 	| ">" { mk lexbuf (Binop OpGt) }
@@ -236,7 +282,9 @@ and token = parse
 			let pmin = lexeme_start lexbuf in
 			let pmax = (try string2 lexbuf with Exit -> error Unterminated_string pmin) in
 			let str = (try unescape (contents()) with Exit -> error Invalid_escape pmin) in
-			mk_tok (Const (String str)) pmin pmax;
+			let t = mk_tok (Const (String str)) pmin pmax in
+			fast_add_fmt_string (snd t);
+			t
 		}
 	| "~/" {
 			reset();
@@ -248,7 +296,7 @@ and token = parse
 	| '#' ident {
 			let v = lexeme lexbuf in
 			let v = String.sub v 1 (String.length v - 1) in
-			mk lexbuf (Macro v)
+			mk lexbuf (Sharp v)
 		}
 	| '$' ['_' 'a'-'z' 'A'-'Z' '0'-'9']* {
 			let v = lexeme lexbuf in
@@ -256,7 +304,7 @@ and token = parse
 			mk lexbuf (Dollar v)
 		}
 	| ident { mk_ident lexbuf }
-	| idtype { mk lexbuf (Const (Type (lexeme lexbuf))) }
+	| idtype { mk lexbuf (Const (Ident (lexeme lexbuf))) }
 	| _ { invalid_char lexbuf }
 
 and comment = parse
@@ -292,6 +340,7 @@ and regexp = parse
 	| '\\' 't' { add "\t"; regexp lexbuf }
 	| '\\' ['\\' '$' '.' '*' '+' '^' '|' '{' '}' '[' ']' '(' ')' '?' '-' '0'-'9'] { add (lexeme lexbuf); regexp lexbuf }
 	| '\\' ['w' 'W' 'b' 'B' 's' 'S' 'd' 'D' 'x'] { add (lexeme lexbuf); regexp lexbuf }
+	| '\\' ['u' 'U'] ['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] ['0'-'9' 'a'-'f' 'A'-'F'] { add (lexeme lexbuf); regexp lexbuf }
 	| '\\' [^ '\\'] { error (Invalid_character (lexeme lexbuf).[1]) (lexeme_end lexbuf - 1) }
 	| '/' { regexp_options lexbuf, lexeme_end lexbuf }
 	| [^ '\\' '/' '\r' '\n']+ { store lexbuf; regexp lexbuf }

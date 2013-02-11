@@ -1,3 +1,24 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 enum ValueType {
 	TNull;
 	TInt;
@@ -10,7 +31,7 @@ enum ValueType {
 	TUnknown;
 }
 
-@:core_api class Type {
+@:coreApi class Type {
 
 	public static function getClass<T>( o : T ) : Class<T> untyped {
 		if(o == null) return null;
@@ -32,7 +53,7 @@ enum ValueType {
 			return __call__("_hx_ttype", c);
 	}
 
-	public static function getEnum( o : Dynamic ) : Enum<Dynamic> untyped {
+	public static function getEnum( o : EnumValue ) : Enum<Dynamic> untyped {
 		if(!__php__("$o instanceof Enum"))
 			return null;
 		else
@@ -59,7 +80,7 @@ enum ValueType {
 
 	public static function resolveClass( name : String ) : Class<Dynamic> untyped {
 		var c = untyped __call__("_hx_qtype", name);
-		if(__php__("$c instanceof _hx_class"))
+		if(__php__("$c instanceof _hx_class || $c instanceof _hx_interface"))
 			return c;
 		else
 			return null;
@@ -78,7 +99,7 @@ enum ValueType {
 		if(cl.__qname__ == 'String') return args[0];
 		var c = cl.__rfl__();
 		if(c == null) return null;
-		return __php__("$inst = $c->getConstructor() ? $c->newInstanceArgs($args->»a) : $c->newInstanceArgs()");
+		return __php__("$inst = $c->getConstructor() ? $c->newInstanceArgs($args->a) : $c->newInstanceArgs()");
 	}
 
 	public static function createEmptyInstance<T>( cl : Class<T> ) : T untyped {
@@ -135,11 +156,12 @@ enum ValueType {
 		$ms = $rfl->getMethods();
 		while(list(, $m) = each($ms)) {
 			$n = $m->getName();
-			if(!$m->isStatic() && ! in_array($n, $internals)) $r[] = $n;
+			if(!$m->isStatic() && !in_array($n, $internals)) $r[] = $n;
 		}
 		$ps = $rfl->getProperties();
 		while(list(, $p) = each($ps))
-			if(!$p->isStatic()) $r[] = $p->getName()");
+			if(!$p->isStatic() && ($name = $p->getName()) !== '__dynamics') $r[] = $name;
+		");
 		return untyped __php__("new _hx_array(array_values(array_unique($r)))");
 	}
 
@@ -149,13 +171,17 @@ enum ValueType {
 		untyped __php__("
 		$rfl = $c->__rfl__();
 		if($rfl === null) return new _hx_array(array());
-		$ms = $rfl->getMethods();
+		$ms = $rfl->getMethods(ReflectionMethod::IS_STATIC);
 		$r = array();
-		while(list(, $m) = each($ms))
-			if($m->isStatic()) $r[] = $m->getName();
-		$ps = $rfl->getProperties();
-		while(list(, $p) = each($ps))
-			if($p->isStatic()) $r[] = $p->getName();
+		while(list(, $m) = each($ms)) {
+			$cls = $m->getDeclaringClass();
+			if($cls->getName() == $c->__tname__) $r[] = $m->getName();
+		}
+		$ps = $rfl->getProperties(ReflectionMethod::IS_STATIC);
+		while(list(, $p) = each($ps)) {
+			$cls = $p->getDeclaringClass();
+			if($cls->getName() == $c->__tname__ && ($name = $p->getName()) !== '__properties__') $r[] = $name;
+		}
 		");
 		return untyped __php__("new _hx_array(array_unique($r))");
 	}
@@ -210,19 +236,19 @@ enum ValueType {
 		return true;
 	}
 
-	public static function enumConstructor( e : Dynamic ) : String {
-		return e.tag;
+	public static function enumConstructor( e : EnumValue ) : String {
+		return untyped e.tag;
 	}
 
-	public static function enumParameters( e : Dynamic ) : Array<Dynamic> {
+	public static function enumParameters( e : EnumValue ) : Array<Dynamic> untyped {
 		if(e.params == null)
 			return [];
 		else
-			return untyped __php__("new _hx_array($e->params)");
+			return __php__("new _hx_array($e->params)");
 	}
 
-	public inline static function enumIndex( e : Dynamic ) : Int {
-		return e.index;
+	public inline static function enumIndex( e : EnumValue ) : Int {
+		return untyped e.index;
 	}
 
 	public static function allEnums<T>( e : Enum<T> ) : Array<T> {

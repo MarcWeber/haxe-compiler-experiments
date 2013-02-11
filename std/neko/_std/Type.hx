@@ -1,28 +1,24 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
 enum ValueType {
 	TNull;
 	TInt;
@@ -35,7 +31,7 @@ enum ValueType {
 	TUnknown;
 }
 
-@:core_api class Type {
+@:coreApi class Type {
 
 	public static function getClass<T>( o : T ) : Class<T> untyped {
 		if( __dollar__typeof(o) != __dollar__tobject )
@@ -46,7 +42,7 @@ enum ValueType {
 		return p.__class__;
 	}
 
-	public static function getEnum( o : Dynamic ) : Enum<Dynamic> untyped {
+	public static function getEnum( o : EnumValue ) : Enum<Dynamic> untyped {
 		if( __dollar__typeof(o) != __dollar__tobject )
 			return null;
 		return o.__enum__;
@@ -154,7 +150,7 @@ enum ValueType {
 		a.remove("__properties__");
 		a.remove("prototype");
 		a.remove("new");
-		#if macro
+		#if (macro || interp)
 		a.remove("__ct__");
 		#end
 		return a;
@@ -167,12 +163,12 @@ enum ValueType {
 
 	public static function typeof( v : Dynamic ) : ValueType untyped {
 		return switch( __dollar__typeof(v) ) {
-		case __dollar__tnull: TNull;
-		case __dollar__tint: TInt;
-		case __dollar__tfloat: TFloat;
-		case __dollar__tbool: TBool;
-		case __dollar__tfunction: TFunction;
-		case __dollar__tobject:
+		case 0: TNull;
+		case 1: TInt;
+		case 2: TFloat;
+		case 3: TBool;
+		case 7: TFunction;
+		case 5:
 			var c = v.__class__;
 			if( c != null )
 				TClass(c);
@@ -202,16 +198,16 @@ enum ValueType {
 		return true;
 	}
 
-	public static function enumConstructor( e : Dynamic ) : String {
-		return new String(e.tag);
+	public static function enumConstructor( e : EnumValue ) : String {
+		return new String(untyped e.tag);
 	}
 
-	public static function enumParameters( e : Dynamic ) : Array<Dynamic> {
-		return if( e.args == null ) [] else untyped Array.new1(e.args,__dollar__asize(e.args));
+	public static function enumParameters( e : EnumValue ) : Array<Dynamic> {
+		return untyped if( e.args == null ) [] else Array.new1(e.args,__dollar__asize(e.args));
 	}
 
-	public inline static function enumIndex( e : Dynamic ) : Int {
-		return e.index;
+	public inline static function enumIndex( e : EnumValue ) : Int {
+		return untyped e.index;
 	}
 
 	public static function allEnums<T>( e : Enum<T> ) : Array<T> {

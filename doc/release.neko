@@ -50,7 +50,7 @@ chdir(dir+"/std/tools");
 
 chdir("haxedoc");
 cmd("haxe haxedoc.hxml");
-cmd(curdir+"haxedoc \"../../../../flash.xml;flash\" \"../../../../neko.xml;neko\" \"../../../../js.xml;js\" \"../../../../flash9.xml;flash9;flash\" \"../../../../php.xml;php\" \"../../../../cpp.xml;cpp\"");
+cmd(curdir+"haxedoc -v \"../../../../flash8.xml;flash8;flash\" \"../../../../neko.xml;neko\" \"../../../../js.xml;js\" \"../../../../flash9.xml;flash\" \"../../../../php.xml;php\" \"../../../../cpp.xml;cpp\"");
 cmd("mv index.html content ../../../doc");
 cmd("mv haxedoc"+binext+" ../../..");
 chdir("..");
@@ -64,7 +64,7 @@ chdir("..");
 
 chdir("..");
 
-cmd("rm -rf .svn */.svn */*/.svn */*/*/.svn");
+cmd("rm -rf .svn */.svn */*/.svn */*/*/.svn */*/*/*/.svn");
 cmd("rm -rf all.n all.js *.swf *.xml");
 
 chdir("tools");

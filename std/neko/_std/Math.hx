@@ -1,30 +1,27 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 import neko.Lib;
 
-@:core_api @:final class Math {
+@:coreApi @:final class Math {
 
 	public static var PI(default,null) : Float;
 	public static var NaN(default,null) : Float;
@@ -50,6 +47,10 @@ import neko.Lib;
 	public static function acos( v : Float ) : Float return 0.
 	public static function pow( v : Float, exp : Float ) : Float return 0.
 
+	public static function fround( v : Float ) : Float return 0.
+	public static function ffloor( v : Float ) : Float return 0.
+	public static function fceil( v : Float ) : Float return 0.
+
 	static var __rnd;
 	static var _rand_float = Lib.load("std","random_float",1);
 	static var _rand_int = Lib.load("std","random_int",2);
@@ -57,7 +58,7 @@ import neko.Lib;
 	public static function random() : Float { return _rand_float(__rnd); }
 
 	public static function isNaN(f:Float) : Bool { return untyped __dollar__isnan(f); }
-	public static function isFinite(f:Float) : Bool { return !untyped __dollar__isinfinite(f); }
+	public static function isFinite(f:Float) : Bool { return !untyped (__dollar__isinfinite(f) || __dollar__isnan(f)); }
 
 	static function __init__() : Void {
 	 	__rnd = Lib.load("std","random_new",0)();
@@ -80,7 +81,10 @@ import neko.Lib;
 		M.atan = Lib.load("std","math_atan",1);
 		M.asin = Lib.load("std","math_asin",1);
 		M.acos = Lib.load("std","math_acos",1);
-		M.pow = Lib.load("std","math_pow",2);
+		M.pow = Lib.load("std", "math_pow", 2);
+		M.fceil = try Lib.load("std", "math_fceil", 1) catch( e : Dynamic ) M.ceil;
+		M.ffloor = try Lib.load("std", "math_ffloor", 1) catch( e : Dynamic ) M.floor;
+		M.fround = try Lib.load("std", "math_fround", 1) catch( e : Dynamic ) M.round;
 	}
 
 }

@@ -1,21 +1,25 @@
 (*
- *  Haxe Compiler
- *  Copyright (c)2005 Nicolas Cannasse
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *)
+
 open Swf
 open Ast
 open Type
@@ -466,7 +470,7 @@ let define_var ctx v ef =
 let alloc_tmp ctx =
 	let r = alloc_reg ctx in
 	if ctx.flash6 then
-		let name = "$" ^ string_of_int r in		
+		let name = "$" ^ string_of_int r in
 		define_var ctx (alloc_var name t_dynamic) None;
 		TmpVar (name,r);
 	else
@@ -579,9 +583,15 @@ let rec gen_access ?(read_write=false) ctx forcall e =
 		VarStr
 	| TLocal v ->
 		access_local ctx v.v_name
+	| TField (e,FClosure (_,{ cf_name = f })) ->
+		gen_expr ctx true e;
+		if read_write then assert false;
+		push ctx [VStr (f,is_protected ctx e.etype f)];
+		VarClosure
 	| TField (e2,f) ->
 		gen_expr ctx true e2;
 		if read_write then write ctx ADup;
+		let f = field_name f in
 		let p = VStr (f,is_protected ctx e2.etype f) in
 		push ctx [p];
 		if read_write then begin
@@ -592,11 +602,6 @@ let rec gen_access ?(read_write=false) ctx forcall e =
 			VarVolatile
 		else
 			VarObj
-	| TClosure (e,f) ->
-		gen_expr ctx true e;
-		if read_write then assert false;
-		push ctx [VStr (f,is_protected ctx e.etype f)];
-		VarClosure
 	| TArray (ea,eb) ->
 		if read_write then
 			try
@@ -619,16 +624,11 @@ let rec gen_access ?(read_write=false) ctx forcall e =
 			gen_expr ctx true eb;
 		end;
 		VarObj
-	| TEnumField (en,f) ->
-		getvar ctx (gen_path ctx en.e_path false);
-		push ctx [VStr (f,false)];
-		(match follow e.etype with
-		| TFun _ -> VarClosure
-		| _ -> VarObj)
 	| TTypeExpr t ->
 		(match t with
 		| TClassDecl c -> gen_path ctx c.cl_path c.cl_extern
 		| TEnumDecl e -> gen_path ctx e.e_path false
+		| TAbstractDecl a -> gen_path ctx a.a_path false
 		| TTypeDecl _ -> assert false)
 	| _ ->
 		if not forcall then invalid_expr e.epos;
@@ -658,6 +658,7 @@ and gen_try_catch ctx retval e catchs =
 		else let t = (match follow v.v_type with
 			| TEnum (e,_) -> Some (TEnumDecl e)
 			| TInst (c,_) -> Some (TClassDecl c)
+			| TAbstract (a,_) -> Some (TAbstractDecl a)
 			| TFun _
 			| TLazy _
 			| TType _
@@ -832,7 +833,7 @@ and gen_binop ctx retval op e1 e2 =
 		write ctx APop;
 		gen_expr ctx true e2;
 		jump_end()
-	| OpInterval ->
+	| OpInterval | OpArrow ->
 		(* handled by typer *)
 		assert false
 
@@ -970,11 +971,9 @@ and gen_expr_2 ctx retval e =
 	| TConst TSuper
 	| TConst TThis
 	| TField _
-	| TClosure _
 	| TArray _
 	| TLocal _
-	| TTypeExpr _
-	| TEnumField _ ->
+	| TTypeExpr _ ->
 		getvar ctx (gen_access ctx false e)
 	| TConst c ->
 		gen_constant ctx c e.epos
@@ -1411,9 +1410,11 @@ let gen_type_def ctx t =
 		setvar ctx VarObj;
 		(* true if implements mt.Protect *)
 		let flag = is_protected ctx ~stat:true (TInst (c,[])) "" in
-		List.iter (gen_class_static_field ctx c flag) c.cl_ordered_statics;
+		if (Common.has_feature ctx.com "Reflect.getProperty") || (Common.has_feature ctx.com "Reflect.setProperty") then
+			Codegen.add_property_field ctx.com c;
+		List.iter (fun f -> if not (is_extern_field f) then gen_class_static_field ctx c flag f) c.cl_ordered_statics;
 		let flag = is_protected ctx (TInst (c,[])) "" in
-		PMap.iter (fun _ f -> match f.cf_kind with Var { v_read = AccResolve } -> () | _ -> gen_class_field ctx flag f) c.cl_fields;
+		PMap.iter (fun _ f -> if not (is_extern_field f) then gen_class_field ctx flag f) c.cl_fields;
 	| TEnumDecl e when e.e_extern ->
 		()
 	| TEnumDecl e ->
@@ -1436,7 +1437,7 @@ let gen_type_def ctx t =
 			write ctx AObjSet;
 		);
 		PMap.iter (fun _ f -> gen_enum_field ctx e f) e.e_constrs
-	| TTypeDecl _ ->
+	| TTypeDecl _ | TAbstractDecl _ ->
 		()
 
 let gen_boot ctx =
@@ -1490,7 +1491,7 @@ let convert_header ctx ver (w,h,fps,bg) =
 		};
 		h_frame_count = 1;
 		h_fps = to_float16 (if fps > 127.0 then 127.0 else fps);
-		h_compressed = not (Common.defined ctx "no-swf-compress");
+		h_compressed = not (Common.defined ctx Define.NoSwfCompress);
 	} , bg
 
 let default_header ctx ver =
@@ -1528,7 +1529,7 @@ let generate com =
 		extern_boot = true;
 	} in
 	write ctx (AStringPool []);
-	protect_all := not (Common.defined com "swf-mark");
+	protect_all := not (Common.defined com Define.SwfMark);
 	if com.debug then begin
 		push ctx [VStr (ctx.stack.Codegen.stack_var,false); VInt 0];
 		write ctx AInitArray;
@@ -1571,7 +1572,7 @@ let generate com =
 	end_try();
 	let segs = List.rev ((ctx.opcodes,ctx.idents) :: ctx.segs) in
 	let tags = List.map build_tag segs in
-	if Common.defined com "swf-mark" then begin
+	if Common.defined com Define.SwfMark then begin
 		if List.length segs > 1 then assert false;
 		let pidents = snd (List.hd tags) in
 		let ch = IO.output_channel (open_out_bin (Filename.chop_extension com.file ^ ".mark")) in

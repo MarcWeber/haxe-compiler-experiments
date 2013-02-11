@@ -1,3 +1,24 @@
+/*
+ * Copyright (C)2005-2012 Haxe Foundation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
 package php;
 
 class Lib {
@@ -48,21 +69,51 @@ class Lib {
 	}
 
 	public static function toPhpArray(a : Array<Dynamic>) : NativeArray {
-		return untyped __field__(a, '»a');
+		return untyped __field__(a, 'a');
 	}
 
 	public static inline function toHaxeArray(a : NativeArray) : Array<Dynamic> {
 		return untyped __call__("new _hx_array", a);
 	}
 
-	public static function hashOfAssociativeArray<T>(arr : NativeArray) : Hash<T> {
-		var h = new Hash<T>();
-		untyped __php__("reset($arr); while(list($k, $v) = each($arr)) $h->set($k, $v)");
+	public static function hashOfAssociativeArray<T>(arr : NativeArray) : haxe.ds.StringMap<T> {
+		var h = new haxe.ds.StringMap<T>();
+		untyped h.h = arr;
 		return h;
 	}
-	
-	public static function associativeArrayOfHash(hash : Hash<Dynamic>) : NativeArray {
+
+	public static function associativeArrayOfHash(hash : haxe.ds.StringMap<Dynamic>) : NativeArray {
 		return untyped hash.h;
+	}
+
+	public static function objectOfAssociativeArray(arr : NativeArray) : Dynamic {
+		untyped __php__("foreach($arr as $key => $value){
+			if(is_array($value)) $arr[$key] = php_Lib::objectOfAssociativeArray($value);
+		}");
+		return untyped __call__("_hx_anonymous", arr);
+	}
+
+	public static function associativeArrayOfObject(ob : Dynamic) : NativeArray {
+		return untyped __php__("(array) $ob");
+	}
+
+	/**
+	 * See the documentation for the equivalent PHP function for details on usage:
+	 * http://php.net/manual/en/function.mail.php
+	 * @param	to
+	 * @param	subject
+	 * @param	message
+	 * @param	?additionalHeaders
+	 * @param	?additionalParameters
+	 */
+	public static function mail(to : String, subject : String, message : String, ?additionalHeaders : String, ?additionalParameters : String) : Bool
+	{
+		if(null != additionalParameters)
+			return untyped __call__("mail", to, subject, message, additionalHeaders, additionalParameters);
+		else if(null != additionalHeaders)
+			return untyped __call__("mail", to, subject, message, additionalHeaders);
+		else
+			return untyped __call__("mail", to, subject, message);
 	}
 
 	/**
@@ -97,7 +148,7 @@ class Lib {
 		}
 		return o;
 	}
-	
+
 	/**
 	*  Loads types defined in the specified directory.
  	*/
@@ -108,7 +159,7 @@ class Lib {
  		$_hx_cache_content = '';
  		//Calling this function will put all types present in the specified types in the $_hx_types_array
  		_hx_build_paths($pathToLib, $_hx_types_array, array(), $prefix);
- 
+
  		for($i=0;$i<count($_hx_types_array);$i++) {
  			//For every type that has been found, create its description
  			$t = null;

@@ -13,12 +13,15 @@ class TestXML extends Test {
 	function testBasic() {
 		var x = Xml.parse('<a href="hello">World<b/></a>');
 
+		t( x.firstChild() == x.firstChild() );
+		
 		eq( x.nodeType, Xml.Document );
 		checkExc(x);
 
 		x = x.firstChild();
 		eq( x.nodeType, Xml.Element );
 
+		
 		// nodeName
 		eq( x.nodeName, "a" );
 		x.nodeName = "b";
@@ -57,7 +60,7 @@ class TestXML extends Test {
 		#end
 		#if flash9
 		eq( Xml.parse('&quot; &lt; &gt;').toString(), '" &lt; &gt;' ); // some entities are resolved but not escaped on printing
-		#else
+		#elseif
 		eq( Xml.parse('&quot; &lt; &gt;').toString(), '&quot; &lt; &gt;' );
 		#end
 	}
@@ -123,11 +126,11 @@ class TestXML extends Test {
 		eq( Xml.createComment("Hello").toString(), "<!--Hello-->" );
 		
 		#if flash9
-		eq( Xml.createProlog("XHTML").toString(), "<?XHTML ?>");
+		eq( Xml.createProcessingInstruction("XHTML").toString(), "<?XHTML ?>");
 		// doctype is parsed but not printed
 		eq( Xml.createDocType("XHTML").toString(), "" );
 		#else
-		eq( Xml.createProlog("XHTML").toString(), "<?XHTML?>");
+		eq( Xml.createProcessingInstruction("XHTML").toString(), "<?XHTML?>");
 		eq( Xml.createDocType("XHTML").toString(), "<!DOCTYPE XHTML>" );
 		#end
 				
@@ -161,14 +164,80 @@ class TestXML extends Test {
 		h.nodeName = "em";
 		eq( h.nodeName, "em" );
 
-		eq( Lambda.count({ iterator : callback(x.elementsNamed,"em") }), 1 );
+		eq( Lambda.count({ iterator : x.elementsNamed.bind("em") }), 1 );
 
 		h.nodeName = "xhtml:em";
 
-		eq( Lambda.count({ iterator : callback(x.elementsNamed,"xhtml:em") }), 1 );
-		eq( Lambda.count({ iterator : callback(x.elementsNamed,"em") }), 0 );
+		eq( Lambda.count({ iterator : x.elementsNamed.bind("xhtml:em") }), 1 );
+		eq( Lambda.count({ iterator : x.elementsNamed.bind("em") }), 0 );
 
 		eq( h.nodeName, "xhtml:em" );
 	}
 
+	function testNodetype() {
+		var element = Xml.createElement("x");
+
+		var l = [Xml.createPCData("x"), Xml.createCData("x"), Xml.createDocType("x"), Xml.createProcessingInstruction("x") #if !flash8, Xml.createComment("x") #end];
+		for (xml in l)
+		{
+			exc(function() xml.firstChild());
+			exc(function() xml.firstElement());
+			exc(function() xml.elements());
+			exc(function() xml.elementsNamed("x"));
+			exc(function() xml.addChild(element));
+			exc(function() xml.removeChild(element));
+			exc(function() xml.insertChild(element, 0));
+			exc(function() for (x in xml) null);
+		}
+	}
+	
+	function testEntities() {
+		var entities = ["&lt;", "&gt;", "&quot;", "&amp;", "&apos;", "&nbsp;", "&euro;", "&#64;", "&#244;", "&#x3F;", "&#xFF;"];
+		var values = entities.copy();
+		#if (flash || js)
+		// flash parser does support XML + some HTML entities (nbsp only ?) + character codes entities
+		values = ['<', '>', '"', '&', "'", String.fromCharCode(160), '&euro;', '@', 'ô', '?', 'ÿ'];
+		#end
+		
+		#if flash9
+		// for a very strange reason, flash9 uses a non standard charcode for non breaking space
+		values[5] = String.fromCharCode(65440);
+		#end
+		
+		#if php
+		// &nbsp; and &euro; creates an invalid entity error (first time I see PHP being strict !)
+		entities[5] = "x";
+		entities[6] = "x";
+		// character codes entities are supported
+		values = ["&lt;", "&gt;", "&quot;", "&amp;", "&apos;", "x", "x", '@', 'ô', '?', 'ÿ'];
+		#end
+		
+		for( i in 0...entities.length ) {
+			infos(entities[i]);
+			eq( Xml.parse(entities[i]).firstChild().nodeValue, values[i] );
+		}
+	}
+	
+	function testCustomXmlParser() {
+		var entities = ["&lt;", "&gt;", "&quot;", "&amp;", "&apos;", "&euro;", "&#64;", "&#244;", "&#x3F;", "&#xFF;"];
+		var values = ['<', '>', '"', '&', "'", '&euro;', '@', String.fromCharCode(244), String.fromCharCode(0x3F), String.fromCharCode(0xFF)];
+		
+		for( i in 0...entities.length ) {
+			infos(entities[i]);
+			eq( haxe.xml.Parser.parse(entities[i]).firstChild().nodeValue, values[i] );
+		}
+		
+		var s = "<a>&gt;<b>&lt;</b>&lt;&gt;<b>&gt;&lt;</b>\"</a>";
+		var xml = haxe.xml.Parser.parse(s);
+		eq(s, xml.toString());
+	}
+	
+	function testMore() {
+		var doc = Xml.parse("<a>A</a><i>I</i>");
+		var aElement = doc.elementsNamed('a').next();
+		var iElement = doc.elementsNamed('i').next();
+		iElement.addChild(aElement);
+		
+		eq(doc.toString(), "<i>I<a>A</a></i>");
+	}
 }

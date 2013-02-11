@@ -1,39 +1,54 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 package haxe;
 
+/**
+	The Timer class allows you to create asynchronous timers on platforms that
+	support events.
+	
+	The intended usage is to create an instance of the Timer class with a given
+	interval, set its run() method to a custom function to be invoked and
+	eventually call stop() to stop the Timer.
+	
+	It is also possible to extend this class and override its run() method in
+	the child class.
+**/
 class Timer {
-	#if (neko || php)
+	#if (neko || php || cpp)
 	#else
 
 	private var id : Null<Int>;
 
-	#if js
-	private var timerId : Int;
-	#end
-
+	/**
+		Creates a new timer that will run every [time_ms] milliseconds.
+		
+		After creating the Timer instance, it calls [this].run() repeatedly,
+		with delays of [time_ms] milliseconds, until [this].stop() is called.
+		
+		The first invocation occurs after [time_ms] milliseconds, not
+		immediately.
+		
+		The accuracy of this may be platform-dependent.
+	**/
 	public function new( time_ms : Int ){
 		#if flash9
 			var me = this;
@@ -42,13 +57,19 @@ class Timer {
 			var me = this;
 			id = untyped _global["setInterval"](function() { me.run(); },time_ms);
 		#elseif js
-			var arr : Array<Timer> = untyped haxe_timers;
-			id = arr.length;
-			arr[id] = this;
-			timerId = untyped window.setInterval("haxe_timers["+id+"].run();",time_ms);
+			var me = this;
+			id = untyped setInterval(function() me.run(),time_ms);
 		#end
 	}
 
+	/**
+		Stops [this] Timer.
+		
+		After calling this method, no additional invocations of [this].run()
+		will occur.
+		
+		It is not possible to restart [this] Timer once stopped.
+	**/
 	public function stop() {
 		if( id == null )
 			return;
@@ -57,23 +78,35 @@ class Timer {
 		#elseif flash
 			untyped _global["clearInterval"](id);
 		#elseif js
-			untyped window.clearInterval(timerId);
-			var arr = untyped haxe_timers;
-			arr[id] = null;
-			if( id > 100 && id == arr.length - 1 ) {
-				// compact array
-				var p = id - 1;
-				while( p >= 0 && arr[p] == null )
-					p--;
-				arr = arr.slice(0,p+1);
-			}
+			untyped clearInterval(id);
 		#end
 		id = null;
 	}
 
+	/**
+		This method is invoked repeatedly on [this] Timer.
+		
+		It can be overridden in a subclass, or rebound directly to a custom
+		function:
+			var timer = new haxe.Timer(1000); // 1000ms delay
+			timer.run = function() { ... }
+			
+		Once bound, it can still be rebound to different functions until [this]
+		Timer is stopped through a call to [this].stop().
+	**/
 	public dynamic function run() {
+		trace("run");
 	}
 
+	/**
+		Invokes [f] after [time_ms] milliseconds.
+		
+		This is a convenience function for creating a new Timer instance with
+		[time_ms] as argument, binding its run() method to [f] and then stopping
+		[this] Timer upon the first invocation.
+		
+		If [f] is null, the result is unspecified.
+	**/
 	public static function delay( f : Void -> Void, time_ms : Int ) {
 		var t = new haxe.Timer(time_ms);
 		t.run = function() {
@@ -84,7 +117,18 @@ class Timer {
 	}
 
 	#end
-	
+
+	/**
+		Measures the time it takes to execute [f], in seconds with fractions.
+		
+		This is a convenience function for calculating the difference between
+		Timer.stamp() before and after the invocation of [f].
+		
+		The difference is passed as argument to Log.trace(), with "s" appended
+		to denote the unit. The optional [pos] argument is passed through.
+		
+		If [f] is null, the result is unspecified.
+	**/
 	public static function measure<T>( f : Void -> T, ?pos : PosInfos ) : T {
 		var t0 = stamp();
 		var r = f();
@@ -93,28 +137,25 @@ class Timer {
 	}
 
 	/**
-		Returns a timestamp, in seconds
+		Returns a timestamp, in seconds with fractions.
+		
+		The value itself might differ depending on platforms, only differences
+		between two values make sense.
 	**/
 	public static function stamp() : Float {
 		#if flash
 			return flash.Lib.getTimer() / 1000;
-		#elseif neko
-			return neko.Sys.time();
-		#elseif php
-			return php.Sys.time();
+		#elseif (neko || php)
+			return Sys.time();
 		#elseif js
 			return Date.now().getTime() / 1000;
 		#elseif cpp
 			return untyped __global__.__time_stamp();
+		#elseif sys
+			return Sys.time();
 		#else
 			return 0;
 		#end
 	}
 
-	#if js
-	static function __init__() untyped {
-		if( __js__('typeof')(haxe_timers) == 'undefined' ) haxe_timers = [];
-	}
-	#end
-	
 }

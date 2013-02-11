@@ -1,29 +1,25 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
-@:core_api class Reflect {
+@:coreApi class Reflect {
 
 	public inline static function hasField( o : Dynamic, field : String ) : Bool {
 		return untyped __call__("_hx_has_field", o, field);
@@ -37,24 +33,36 @@
 		untyped __setfield__(o, field, value);
 	}
 
-	public static inline function getProperty( o : Dynamic, field : String ) : Dynamic {
-		return Reflect.field(o,field);
+	public static function getProperty( o : Dynamic, field : String ) : Dynamic {
+		if (null == o) return null;
+		var cls : String = Std.is(o, Class) ? untyped __php__("$o->__tname__") : untyped __call__("get_class", o);
+		var cls_vars : php.NativeArray = untyped __call__("get_class_vars", cls);
+		if (untyped __php__("isset($cls_vars['__properties__']) && isset($cls_vars['__properties__']['get_'.$field]) && ($field = $cls_vars['__properties__']['get_'.$field])"))
+			return untyped __php__("$o->$field()");
+		else
+			return untyped __php__("$o->$field");
 	}
 
-	public static inline function setProperty( o : Dynamic, field : String, value : Dynamic ) : Void {
-		setField(o,field,value);
+	public static function setProperty( o : Dynamic, field : String, value : Dynamic ) : Void untyped {
+		if (null == o) return null;
+		var cls : String = Std.is(o, Class) ? untyped __php__("$o->__tname__") : untyped __call__("get_class", o);
+		var cls_vars : php.NativeArray = untyped __call__("get_class_vars", cls);
+		if (untyped __php__("isset($cls_vars['__properties__']) && isset($cls_vars['__properties__']['set_'.$field]) && ($field = $cls_vars['__properties__']['set_'.$field])"))
+			return untyped __php__("$o->$field($value)");
+		else
+			return untyped __php__("$o->$field = $value");
 	}
-	
+
 	public static function callMethod( o : Dynamic, func : Dynamic, args : Array<Dynamic> ) : Dynamic untyped {
 		if (__call__("is_string", o) && !__call__("is_array", func)) {
-			return __call__("call_user_func_array", field(o, func), __field__(args, "»a"));
+			return __call__("call_user_func_array", field(o, func), __field__(args, "a"));
 		}
-		return __call__("call_user_func_array", __call__("is_callable", func) ? func : __call__("array", o, func), (null == args ? __call__("array") : __field__(args, "»a")));
+		return __call__("call_user_func_array", __call__("is_callable", func) ? func : __call__("array", o, func), (null == args ? __call__("array") : __field__(args, "a")));
 	}
 
 	public static function fields( o : Dynamic ) : Array<String> {
 		if( o == null ) return new Array();
-		return untyped __php__('$o instanceof _hx_array')
+		return untyped __php__("$o instanceof _hx_array")
 				? __php__("new _hx_array(array('concat','copy','insert','iterator','length','join','pop','push','remove','reverse','shift','slice','sort','splice','toString','unshift'))")
 				: (__call__('is_string', o)
 					? __php__("new _hx_array(array('charAt','charCodeAt','indexOf','lastIndexOf','length','split','substr','toLowerCase','toString','toUpperCase'))")
@@ -87,7 +95,7 @@
 
 	public static function deleteField( o : Dynamic, f : String ) : Bool {
 		if(!hasField(o,f)) return false;
-		untyped __php__("if(isset($o->»dynamics[$f])) unset($o->»dynamics[$f]); else unset($o->$f)");
+		untyped __php__("if(isset($o->__dynamics[$f])) unset($o->__dynamics[$f]); else if($o instanceof _hx_anonymous) unset($o->$f); else $o->$f = null");
 		return true;
 	}
 
@@ -99,8 +107,9 @@
 		return o2;
 	}
 
+	@:overload(function( f : Array<Dynamic> -> Void ) : Dynamic {})
 	public static function makeVarArgs( f : Array<Dynamic> -> Dynamic ) : Dynamic {
-		untyped __php__("return array(new _hx_lambda(array(&$f), '_hx_make_var_args'), 'execute')");
+		return untyped __php__("array(new _hx_lambda(array(&$f), '_hx_make_var_args'), 'execute')");
 	}
 
 

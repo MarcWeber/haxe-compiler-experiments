@@ -1,21 +1,25 @@
 (*
- *  Haxe Compiler
- *  Copyright (c)2005 Nicolas Cannasse
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *)
+
 open Swf
 open As3
 open As3hl
@@ -23,124 +27,6 @@ open Genswf9
 open Type
 open Common
 open Ast
-
-(* --- MINI ZIP IMPLEMENTATION --- *)
-
-
-type zfile = {
-	fname : string;
-	fcompressed : bool;
-	fclen : int;
-	fsize : int;
-	fcrc : int32;
-	fdate : float;
-}
-
-type t = {
-	ch : unit IO.output;
-	mutable files : zfile list;
-	mutable cdr_size : int;
-	mutable cdr_offset : int;
-}
-
-let zip_create o = {
-	ch = IO.cast_output o;
-	files = [];
-	cdr_size = 0;
-	cdr_offset = 0;
-}
-
-let make_crc32 data =
-	let init = 0xFFFFFFFFl in
-	let polynom = 0xEDB88320l in
-	let crc = ref init in
-	for i = 0 to String.length data - 1 do
-		let b = Int32.of_int (int_of_char (String.unsafe_get data i)) in
-		let tmp = ref (Int32.logand (Int32.logxor (!crc) b) 0xFFl) in
-		for j = 0 to 7 do
-			tmp := if Int32.to_int (Int32.logand (!tmp) 1l) == 1 then
-				Int32.logxor (Int32.shift_right_logical (!tmp) 1) polynom
-			else
-				Int32.shift_right_logical (!tmp) 1;
-		done;
-		crc := Int32.logxor (Int32.shift_right_logical (!crc) 8) (!tmp);
-	done;
-	Int32.logxor (!crc) init
-
-let zip_write_date z d =
-	let t = Unix.localtime d in
-	let hour = t.Unix.tm_hour in
-	let min = t.Unix.tm_min in
-	let sec = t.Unix.tm_sec lsr 1 in
-	IO.write_ui16 z.ch ((hour lsl 11) lor (min lsl 5) lor sec);
-	let year = t.Unix.tm_year - 80 in
-	let month = t.Unix.tm_mon + 1 in
-	let day = t.Unix.tm_mday in
-	IO.write_ui16 z.ch ((year lsl 9) lor (month lsl 5) lor day)
-
-let zip_write_file z name data date compress =
-	IO.write_i32 z.ch 0x04034B50;
-	IO.write_ui16 z.ch 0x0014; (* version *)
-	IO.write_ui16 z.ch 0;
-	let crc32 = make_crc32 data in
-	let cdata = if compress then
-		let d = Extc.zip data in
-		String.sub d 2 (String.length d - 4)
-	else
-		data
-	in
-	IO.write_ui16 z.ch (if compress then 0x08 else 0x00);
-	zip_write_date z date;
-	IO.write_real_i32 z.ch crc32;
-	IO.write_i32 z.ch (String.length cdata);
-	IO.write_i32 z.ch (String.length data);
-	IO.write_ui16 z.ch (String.length name);
-	IO.write_ui16 z.ch 0;
-	IO.nwrite z.ch name;
-	IO.nwrite z.ch cdata;
-	z.files <- {
-		fname = name;
-		fcompressed = compress;
-		fclen = String.length cdata;
-		fsize = String.length data;
-		fcrc = crc32;
-		fdate = date;
-	} :: z.files
-
-let zip_write_cdr_file z f =
-	let namelen = String.length f.fname in
-	IO.write_i32 z.ch 0x02014B50;
-	IO.write_ui16 z.ch 0x0014;
-	IO.write_ui16 z.ch 0x0014;
-	IO.write_ui16 z.ch 0;
-	IO.write_ui16 z.ch (if f.fcompressed then 0x08 else 0);
-	zip_write_date z f.fdate;
-	IO.write_real_i32 z.ch f.fcrc;
-	IO.write_i32 z.ch f.fclen;
-	IO.write_i32 z.ch f.fsize;
-	IO.write_ui16 z.ch namelen;
-	IO.write_ui16 z.ch 0;
-	IO.write_ui16 z.ch 0;
-	IO.write_ui16 z.ch 0;
-	IO.write_ui16 z.ch 0;
-	IO.write_i32 z.ch 0;
-	IO.write_i32 z.ch z.cdr_offset;
-	IO.nwrite z.ch f.fname;
-	z.cdr_size <- z.cdr_size + 46 + namelen;
-	z.cdr_offset <- z.cdr_offset + 30 + namelen + f.fclen
-
-let zip_write_cdr z =
-	List.iter (zip_write_cdr_file z) (List.rev z.files);
-	IO.write_i32 z.ch 0x06054B50;
-	IO.write_ui16 z.ch 0;
-	IO.write_ui16 z.ch 0;
-	IO.write_ui16 z.ch (List.length z.files);
-	IO.write_ui16 z.ch (List.length z.files);
-	IO.write_i32 z.ch z.cdr_size;
-	IO.write_i32 z.ch z.cdr_offset;
-	IO.write_ui16 z.ch 0
-
-(* ------------------------------- *)
 
 let rec make_tpath = function
 	| HMPath (pack,name) ->
@@ -151,8 +37,9 @@ let rec make_tpath = function
 			| [], "uint" -> [], "UInt"
 			| [], "Number" -> [], "Float"
 			| [], "Boolean" -> [], "Bool"
-			| [], "Object" | [], "Function" -> [], "Dynamic"
-			| [],"Class" | [],"Array" -> pdyn := true; pack, name
+			| [], "Object" -> ["flash";"utils"], "Object"
+			| [], "Function" -> ["flash";"utils"], "Function"
+			| [], "Class" | [],"Array" -> pdyn := true; pack, name
 			| [], "Error" -> ["flash";"errors"], "Error"
 			| [] , "XML" -> ["flash";"xml"], "XML"
 			| [] , "XMLList" -> ["flash";"xml"], "XMLList"
@@ -172,6 +59,12 @@ let rec make_tpath = function
 		{
 			tpackage = (match ns with
 				| HNInternal (Some ns) -> ExtString.String.nsplit ns "."
+				| HNPrivate (Some ns) ->
+					(try
+						let file, line = ExtString.String.split ns ".as$" in
+						[file ^ "_" ^ line]
+					with _ ->
+						[])
 				| _ -> []);
 			tname = id;
 			tparams = [];
@@ -202,8 +95,38 @@ let make_topt = function
 
 let make_type t = CTPath (make_topt t)
 
+let make_dyn_type t =
+	match make_topt t with
+	| { tpackage = ["flash";"utils"]; tname = ("Object"|"Function") } -> make_type None
+	| o -> CTPath o
+
+let is_valid_path com pack name =
+	let rec loop = function
+		| [] ->
+			false
+		| load :: l ->
+			match load (pack,name) Ast.null_pos with
+			| None -> loop l
+			| Some (file,(_,a)) -> true
+	in
+	let file = Printf.sprintf "%s/%s.hx" (String.concat "/" pack) name in
+	loop com.load_extern_type || (try ignore(Common.find_file com file); true with Not_found -> false)
+
 let build_class com c file =
 	let path = make_tpath c.hlc_name in
+	let pos = { pfile = file ^ "@" ^ s_type_path (path.tpackage,path.tname); pmin = 0; pmax = 0 } in
+	match path with
+	| { tpackage = ["flash";"utils"]; tname = ("Object"|"Function") } ->
+		let inf = {
+			d_name = path.tname;
+			d_doc = None;
+			d_params = [];
+			d_meta = [];
+			d_flags = [];
+			d_data = CTPath { tpackage = []; tname = "Dynamic"; tparams = []; tsub = None; };
+		} in
+		(path.tpackage, [(ETypedef inf,pos)])
+	| _ ->
   (* make flags *)
 	let flags = [HExtern] in
 	let flags = if c.hlc_interface then HInterface :: flags else flags in
@@ -216,21 +139,20 @@ let build_class com c file =
 			| HMMultiName (Some id,ns) ->
 				let rec loop = function
 					| [] -> HMPath ([],id)
-					| HNPublic (Some ns) :: _ -> HMPath (ExtString.String.nsplit ns ".",id)
+					| HNPublic (Some ns) :: _ when is_valid_path com (ExtString.String.nsplit ns ".") id -> HMPath (ExtString.String.nsplit ns ".",id)
 					| _ :: l -> loop l
 				in
-				loop (List.rev ns)
+				loop ns
+			| HMPath _ -> i
 			| _ -> assert false
 		) in
-		HImplements (make_tpath i)
+		if c.hlc_interface then HExtends (make_tpath i) else HImplements (make_tpath i)
 	) (Array.to_list c.hlc_implements) @ flags in
-	let flags = if c.hlc_sealed || Common.defined com "flash_strict" then flags else HImplements (make_tpath (HMPath ([],"Dynamic"))) :: flags in
+	let flags = if c.hlc_sealed || Common.defined com Define.FlashStrict then flags else HImplements (make_tpath (HMPath ([],"Dynamic"))) :: flags in
   (* make fields *)
-	let pos = { pfile = file ^ "@" ^ s_type_path (path.tpackage,path.tname); pmin = 0; pmax = 0 } in
 	let getters = Hashtbl.create 0 in
 	let setters = Hashtbl.create 0 in
 	let override = Hashtbl.create 0 in
-	let as3_native = Common.defined com "as3_native" in
 	let is_xml = (match path.tpackage, path.tname with
 		| ["flash";"xml"], ("XML" | "XMLList") -> true
 		| _ -> false
@@ -243,12 +165,12 @@ let build_class com c file =
 				(match ns with
 				| HNPrivate _ | HNNamespace "http://www.adobe.com/2006/flex/mx/internal" -> []
 				| HNNamespace ns ->
-					if not (c.hlc_interface || is_xml) then meta := (":ns",[String ns]) :: !meta;
+					if not (c.hlc_interface || is_xml) then meta := (Meta.Ns,[String ns]) :: !meta;
 					[APublic]
 				| HNExplicit _ | HNInternal _ | HNPublic _ ->
 					[APublic]
 				| HNStaticProtected _ | HNProtected _ ->
-					if as3_native then meta := (":protected",[]) :: !meta;
+					meta := (Meta.Protected,[]) :: !meta;
 					[APrivate])
 			| _ -> []
 		) in
@@ -269,9 +191,9 @@ let build_class com c file =
 		match f.hlf_kind with
 		| HFVar v ->
 			if v.hlv_const then
-				cf.cff_kind <- FProp ("default","never",make_type v.hlv_type,None)
+				cf.cff_kind <- FProp ("default","never",Some (make_type v.hlv_type),None)
 			else
-				cf.cff_kind <- FVar (Some (make_type v.hlv_type),None);
+				cf.cff_kind <- FVar (Some (make_dyn_type v.hlv_type),None);
 			cf :: acc
 		| HFMethod m when m.hlm_override ->
 			Hashtbl.add override (name,stat) ();
@@ -281,6 +203,7 @@ let build_class com c file =
 			| MK3Normal ->
 				let t = m.hlm_type in
 				let p = ref 0 and pn = ref 0 in
+				let make_type = if stat || name = "new" then make_dyn_type else make_type in
 				let args = List.map (fun at ->
 					let aname = (match t.hlmt_pnames with
 						| None -> incr pn; "p" ^ string_of_int !pn
@@ -299,11 +222,14 @@ let build_class com c file =
 					) in
 					incr p;
 					let t = make_type at in
+					let is_opt = ref false in
 					let def_val = match opt_val with
 						| None -> None
 						| Some v ->
 							let v = (match v with
-							| HVNone | HVNull | HVNamespace _ | HVString _ -> None
+							| HVNone | HVNull | HVNamespace _ | HVString _ ->
+								is_opt := true;
+								None
 							| HVBool b ->
 								Some (Ident (if b then "true" else "false"))
 							| HVInt i | HVUInt i ->
@@ -314,10 +240,11 @@ let build_class com c file =
 							match v with
 							| None -> None
 							| Some v ->
-								meta := (":defparam",[String aname;v]) :: !meta;
+								(* add for --gen-hx-classes generation *)
+								meta := (Meta.DefParam,[String aname;v]) :: !meta;
 								Some (EConst v,pos)
 					in
-					(aname,opt_val <> None,Some t,def_val)
+					(aname,!is_opt,Some t,def_val)
 				) t.hlmt_args in
 				let args = if t.hlmt_var_args then
 					args @ List.map (fun _ -> incr pn; ("p" ^ string_of_int !pn,true,Some (make_type None),None)) [1;2;3;4;5]
@@ -368,7 +295,7 @@ let build_class com c file =
 			cff_doc = None;
 			cff_access = flags;
 			cff_meta = [];
-			cff_kind = if get && set then FVar (Some (make_type t), None) else FProp ((if get then "default" else "never"),(if set then "default" else "never"),make_type t,None);
+			cff_kind = if get && set then FVar (Some (make_dyn_type t), None) else FProp ((if get then "default" else "never"),(if set then "default" else "never"),Some (make_dyn_type t),None);
 		}
 	in
 	let fields = Hashtbl.fold (fun (name,stat) t acc ->
@@ -392,19 +319,27 @@ let build_class com c file =
 				match f.cff_kind with
 				| FVar (Some (CTPath { tpackage = []; tname = ("String" | "Int" | "UInt") as tname }),None) when List.mem AStatic f.cff_access ->
 					if !real_type = "" then real_type := tname else if !real_type <> tname then raise Exit;
-					(f.cff_name,None,[],[],pos) :: loop l
+					{
+						ec_name = f.cff_name;
+						ec_pos = pos;
+						ec_args = [];
+						ec_params = [];
+						ec_meta = [];
+						ec_doc = None;
+						ec_type = None;
+					} :: loop l
 				| FFun { f_args = [] } when f.cff_name = "new" -> loop l
 				| _ -> raise Exit
 		in
 		List.iter (function HExtends _ | HImplements _ -> raise Exit | _ -> ()) flags;
 		let constr = loop fields in
 		let name = "fakeEnum:" ^ String.concat "." (path.tpackage @ [path.tname]) in
-		if not (Common.defined com name) then raise Exit;
+		if not (Common.raw_defined com name) then raise Exit;
 		let enum_data = {
 			d_name = path.tname;
 			d_doc = None;
 			d_params = [];
-			d_meta = [(":fakeEnum",[EConst (Type !real_type),pos],pos)];
+			d_meta = [(Meta.FakeEnum,[EConst (Ident !real_type),pos],pos)];
 			d_flags = [EExtern];
 			d_data = constr;
 		} in
@@ -414,7 +349,7 @@ let build_class com c file =
 		d_name = path.tname;
 		d_doc = None;
 		d_params = [];
-		d_meta = if c.hlc_final && List.exists (fun f -> f.cff_name <> "new" && not (List.mem AStatic f.cff_access)) fields then [":final",[],pos] else [];
+		d_meta = if c.hlc_final && List.exists (fun f -> f.cff_name <> "new" && not (List.mem AStatic f.cff_access)) fields then [Meta.Final,[],pos] else [];
 		d_flags = flags;
 		d_data = fields;
 	} in
@@ -428,7 +363,8 @@ let extract_data (_,tags) =
 		| HFClass c ->
 			let path = make_tpath f.hlf_name in
 			(match path with
-			| { tpackage = []; tname = "Float" | "Bool" | "MethodClosure" | "Int" | "UInt" | "Dynamic" } -> ()
+			| { tpackage = []; tname = "Float" | "Bool" | "Int" | "UInt" | "Dynamic" } -> ()
+			| { tpackage = _; tname = "MethodClosure" } -> ()
 			| _ -> Hashtbl.add h (path.tpackage,path.tname) c)
 		| _ -> ()
 	in
@@ -473,21 +409,21 @@ let remove_debug_infos as3 =
 			m2
 	and loop_function f =
 		let cur = ref 0 in
-		let positions = Array.map (fun op ->
+		let positions = MultiArray.map (fun op ->
 			let p = !cur in
 			(match op with
 			| HDebugReg _ | HDebugLine _ | HDebugFile _ | HBreakPointLine _ | HTimestamp -> ()
 			| _ -> incr cur);
 			p
 		) f.hlf_code in
-		let positions = Array.concat [positions;[|!cur|]] in
-		let code = DynArray.create() in
-		Array.iteri (fun pos op ->
+		MultiArray.add positions (!cur);
+		let code = MultiArray.create() in
+		MultiArray.iteri (fun pos op ->
 			match op with
 			| HDebugReg _ | HDebugLine _ | HDebugFile _ | HBreakPointLine _ | HTimestamp -> ()
 			| _ ->
 				let p delta =
-					positions.(pos + delta) - DynArray.length code
+					MultiArray.get positions (pos + delta) - MultiArray.length code
 				in
 				let op = (match op with
 				| HJump (j,delta) -> HJump (j, p delta)
@@ -496,15 +432,15 @@ let remove_debug_infos as3 =
 				| HCallStatic (m,args) -> HCallStatic (loop_method m,args)
 				| HClassDef c -> HClassDef c (* mutated *)
 				| _ -> op) in
-				DynArray.add code op
+				MultiArray.add code op
 		) f.hlf_code;
-		f.hlf_code <- DynArray.to_array code;
+		f.hlf_code <- code;
 		f.hlf_trys <- Array.map (fun t ->
 			{
 				t with
-				hltc_start = positions.(t.hltc_start);
-				hltc_end = positions.(t.hltc_end);
-				hltc_handle = positions.(t.hltc_handle);
+				hltc_start = MultiArray.get positions t.hltc_start;
+				hltc_end = MultiArray.get positions t.hltc_end;
+				hltc_handle = MultiArray.get positions t.hltc_handle;
 			}
 		) f.hlf_trys;
 		f
@@ -513,9 +449,28 @@ let remove_debug_infos as3 =
 
 let parse_swf com file =
 	let t = Common.timer "read swf" in
-	let file = (try Common.find_file com file with Not_found -> failwith ("SWF Library not found : " ^ file)) in
-	let ch = IO.input_channel (open_in_bin file) in
-	let h, tags = (try Swf.parse ch with _ -> failwith ("The input swf " ^ file ^ " is corrupted")) in
+	let is_swc = file_extension file = "swc" in
+	let file = (try Common.find_file com file with Not_found -> failwith ((if is_swc then "SWC" else "SWF") ^ " Library not found : " ^ file)) in
+	let ch = if is_swc then begin
+		let zip = Zip.open_in file in
+		try
+			let entry = Zip.find_entry zip "library.swf" in
+			let ch = IO.input_string (Zip.read_entry zip entry) in
+			Zip.close_in zip;
+			ch
+		with _ ->
+			Zip.close_in zip;
+			failwith ("The input swc " ^ file ^ " is corrupted")
+	end else
+		IO.input_channel (open_in_bin file)
+	in
+	let h, tags = try
+		Swf.parse ch
+	with Out_of_memory ->
+		failwith ("Out of memory while parsing " ^ file)
+	| _ ->
+		failwith ("The input swf " ^ file ^ " is corrupted")
+	in
 	IO.close_in ch;
 	List.iter (fun t ->
 		match t.tdata with
@@ -525,6 +480,33 @@ let parse_swf com file =
 	) tags;
 	t();
 	(h,tags)
+
+let add_swf_lib com file extern =
+	let swf_data = ref None in
+	let swf_classes = ref None in
+	let getSWF = (fun() ->
+		match !swf_data with
+		| None ->
+			let d = parse_swf com file in
+			swf_data := Some d;
+			d
+		| Some d -> d
+	) in
+	let extract = (fun() ->
+		match !swf_classes with
+		| None ->
+			let d = extract_data (getSWF()) in
+			swf_classes := Some d;
+			d
+		| Some d -> d
+	) in
+	let build cl p =
+		match (try Some (Hashtbl.find (extract()) cl) with Not_found -> None) with
+		| None -> None
+		| Some c -> Some (file, build_class com c file)
+	in
+	com.load_extern_type <- com.load_extern_type @ [build];
+	if not extern then com.swf_libs <- (file,getSWF,extract) :: com.swf_libs
 
 (* ------------------------------- *)
 
@@ -545,14 +527,21 @@ let swf_ver = function
 	| 11. -> 13
 	| 11.1 -> 14
 	| 11.2 -> 15
+	| 11.3 -> 16
+	| 11.4 -> 17
+	| 11.5 -> 18
 	| _ -> assert false
 
 let convert_header com (w,h,fps,bg) =
-	if max w h >= 1639 then failwith "-swf-header : size too large";
+	let high = (max w h) * 20 in
+	let rec loop b =
+		if 1 lsl b > high then b else loop (b + 1)
+	in
+	let bits = loop 0 in
 	{
 		h_version = swf_ver com.flash_version;
 		h_size = {
-			rect_nbits = if (max w h) >= 820 then 16 else 15;
+			rect_nbits = bits + 1;
 			left = 0;
 			top = 0;
 			right = w * 20;
@@ -560,7 +549,7 @@ let convert_header com (w,h,fps,bg) =
 		};
 		h_frame_count = 1;
 		h_fps = to_float16 (if fps > 127.0 then 127.0 else fps);
-		h_compressed = not (Common.defined com "no-swf-compress");
+		h_compressed = not (Common.defined com Define.NoSwfCompress);
 	} , bg
 
 let default_header com =
@@ -583,7 +572,10 @@ let build_dependencies t =
 			add_path e.e_path DKType;
 			List.iter (add_type_rec (t::l)) pl;
 		| TInst (c,pl) ->
-			add_path c.cl_path DKType;
+			(match c.cl_kind with KTypeParameter _ -> () | _ -> add_path c.cl_path DKType);
+			List.iter (add_type_rec (t::l)) pl;
+		| TAbstract (a,pl) ->
+			add_path a.a_path DKType;
 			List.iter (add_type_rec (t::l)) pl;
 		| TFun (pl,t2) ->
 			List.iter (fun (_,_,t2) -> add_type_rec (t::l) t2) pl;
@@ -606,7 +598,6 @@ let build_dependencies t =
 	and add_expr e =
 		match e.eexpr with
 		| TTypeExpr t -> add_path (Type.t_path t) DKExpr
-		| TEnumField (e,_) -> add_path e.e_path DKExpr
 		| TNew (c,pl,el) ->
 			add_path c.cl_path DKExpr;
 			List.iter add_type pl;
@@ -666,6 +657,7 @@ let build_dependencies t =
 	| _ -> ());
 	h := PMap.remove (([],"Int"),DKType) (!h);
 	h := PMap.remove (([],"Int"),DKExpr) (!h);
+	h := PMap.remove (([],"Void"),DKType) (!h);
 	PMap.foldi (fun (c,k) () acc -> (c,k) :: acc) (!h) []
 
 let build_swc_catalog com types =
@@ -710,24 +702,6 @@ let build_swc_catalog com types =
 		node "files" [] [];
 	] in
 	"<?xml version=\"1.0\" encoding =\"utf-8\"?>\n" ^ Xml.to_string_fmt x
-
-let make_as3_public data =
-	(* set all protected+private fields to public - this will enable overriding/reflection in haXe classes *)
-	let ns = Array.mapi (fun i ns ->
-		match ns with
-		| A3NPrivate _
-		| A3NInternal _
-		| A3NProtected _
-		| A3NPublic None
-			->
-			A3NPublic None
-		| A3NPublic _
-		| A3NNamespace _
-		| A3NExplicit _
-		| A3NStaticProtected _ -> ns
-	) data.as3_namespaces in
-	let cl = Array.map (fun c -> { c with cl3_namespace = None }) data.as3_classes in
-	{ data with as3_namespaces = ns; as3_classes = cl }
 
 let remove_classes toremove lib hcl =
 	let lib = lib() in
@@ -792,8 +766,26 @@ let build_swf8 com codeclip exports =
 	) in
 	clips @ code
 
+type file_format =
+	| BJPG
+	| BPNG
+	| BGIF
+	| SWAV
+	| SMP3
+
+let detect_format data p =
+	match (try data.[0],data.[1],data.[2] with _ -> '\x00','\x00','\x00') with
+	| '\xFF', '\xD8', _ -> BJPG
+	| '\x89', 'P', 'N' -> BPNG
+	| 'R', 'I', 'F' -> SWAV
+	| 'I', 'D', '3' -> SMP3
+	| '\xFF', '\xFB', _ -> SMP3
+	| 'G', 'I', 'F' -> BGIF
+	| _ ->
+		error "Unknown file format" p
+
 let build_swf9 com file swc =
-	let boot_name = if swc <> None || Common.defined com "haxe-boot" then "haxe" else "boot_" ^ (String.sub (Digest.to_hex (Digest.string file)) 0 4) in
+	let boot_name = if swc <> None || Common.defined com Define.HaxeBoot then "haxe" else "boot_" ^ (String.sub (Digest.to_hex (Digest.string (Filename.basename file))) 0 4) in
 	let code = Genswf9.generate com boot_name in
 	let code = (match swc with
 	| Some cat ->
@@ -825,17 +817,193 @@ let build_swf9 com file swc =
 		classes := { f9_cid = Some !cid; f9_classname = s_type_path (Genswf9.resource_path name) } :: !classes;
 		tag (TBinaryData (!cid,data)) :: acc
 	) com.resources [] in
+	let load_file_data file p =
+		let file = try Common.find_file com file with Not_found -> file in
+		if String.length file > 5 && String.sub file 0 5 = "data:" then
+			String.sub file 5 (String.length file - 5)
+		else
+			(try Std.input_file ~bin:true file with _  -> error "File not found" p)
+	in
 	let bmp = List.fold_left (fun acc t ->
 		match t with
 		| TClassDecl c ->
 			let rec loop = function
 				| [] -> acc
-				| (":bitmap",[EConst (String file),p],_) :: l ->
-					let file = try Common.find_file com file with Not_found -> file in
-					let data = (try Std.input_file ~bin:true file with _  -> error "File not found" p) in
+				| (Meta.Font,(EConst (String file),p) :: args,_) :: l ->
+					let ch = try open_in_bin file with _ -> error "File not found" p in
+					let ttf = Ttf.parse ch in
+					close_in ch;
+					let range_str = match args with
+						| [EConst (String str),_] -> str
+						| _ -> ""
+					in
+					let ttf_swf = Ttf.write_swf ttf range_str in
+					let ch = IO.output_string () in
+					let b = IO.output_bits ch in
+					Ttf.write_font2 ch b ttf_swf;
+					let data = IO.close_out ch in
 					incr cid;
 					classes := { f9_cid = Some !cid; f9_classname = s_type_path c.cl_path } :: !classes;
-					tag (TBitsJPEG2 { bd_id = !cid; bd_data = data; bd_table = None; bd_alpha = None; bd_deblock = None }) :: loop l
+					tag (TFont3 {
+						cd_id = !cid;
+						cd_data = data;
+					}) :: loop l
+				| (Meta.Bitmap,[EConst (String file),p],_) :: l ->
+					let data = load_file_data file p in
+					incr cid;
+					classes := { f9_cid = Some !cid; f9_classname = s_type_path c.cl_path } :: !classes;
+					let raw() =
+						tag (TBitsJPEG2 { bd_id = !cid; bd_data = data; bd_table = None; bd_alpha = None; bd_deblock = Some 0 })
+					in
+					let t = (match detect_format data p with
+						| BPNG ->
+							(*
+								There is a bug in Flash PNG decoder for 24-bits PNGs : Color such has 0xFF00FF is decoded as 0xFE00FE.
+								In that particular case, we will then embed the decoded PNG bytes instead.
+							*)
+							(try
+								let png = Png.parse (IO.input_string data) in
+								let h = Png.header png in
+								(match h.Png.png_color with
+								| Png.ClTrueColor (Png.TBits8,Png.NoAlpha) ->
+									if h.Png.png_width * h.Png.png_height * 4 > Sys.max_string_length then begin
+										com.warning "Flash will loose some color information for this file, add alpha channel to preserve it" p;
+										raise Exit;
+									end;
+									let data = Extc.unzip (Png.data png) in
+									let raw_data = Png.filter png data in
+									let cmp_data = Extc.zip raw_data in
+									tag ~ext:true (TBitsLossless2 { bll_id = !cid; bll_format = 5; bll_width = h.Png.png_width; bll_height = h.Png.png_height; bll_data = cmp_data })
+								| _ -> raw())
+							with Exit ->
+								raw())
+						| _ -> raw()
+					) in
+					t :: loop l
+				| (Meta.Bitmap,[EConst (String dfile),p1;EConst (String afile),p2],_) :: l ->
+					let ddata = load_file_data dfile p1 in
+					let adata = load_file_data afile p2 in
+					(match detect_format ddata p1 with
+					| BJPG -> ()
+					| _ -> error "RGB channel must be a JPG file" p1);
+					(match detect_format adata p2 with
+					| BPNG -> ()
+					| _ -> error "Alpha channel must be a PNG file" p2);
+					let png = Png.parse (IO.input_string adata) in
+					let h = Png.header png in
+					let amask = (match h.Png.png_color with
+						| Png.ClTrueColor (Png.TBits8,Png.HaveAlpha) ->
+							let data = Extc.unzip (Png.data png) in
+							let raw_data = Png.filter png data in
+							let alpha = String.make (h.Png.png_width * h.Png.png_height) '\000' in
+							for i = 0 to String.length alpha do
+								String.unsafe_set alpha i (String.unsafe_get raw_data (i lsl 2));
+							done;
+							Extc.zip alpha
+						| _ -> error "PNG file must contain 8 bit alpha channel" p2
+					) in
+					incr cid;
+					classes := { f9_cid = Some !cid; f9_classname = s_type_path c.cl_path } :: !classes;
+					tag (TBitsJPEG3 { bd_id = !cid; bd_data = ddata; bd_table = None; bd_alpha = Some amask; bd_deblock = Some 0 }) :: loop l
+				| (Meta.File,[EConst (String file),p],_) :: l ->
+					let data = load_file_data file p in
+					incr cid;
+					classes := { f9_cid = Some !cid; f9_classname = s_type_path c.cl_path } :: !classes;
+					tag (TBinaryData (!cid,data)) :: loop l
+				| (Meta.Sound,[EConst (String file),p],_) :: l ->
+					let data = load_file_data file p in
+					let make_flags fmt mono freq bits =
+						let fbits = (match freq with 5512 when fmt <> 2 -> 0 | 11025 -> 1 | 22050 -> 2 | 44100 -> 3 | _ -> failwith ("Unsupported frequency " ^ string_of_int freq)) in
+						let bbits = (match bits with 8 -> 0 | 16 -> 1 | _ -> failwith ("Unsupported bits " ^ string_of_int bits)) in
+						(fmt lsl 4) lor (fbits lsl 2) lor (bbits lsl 1) lor (if mono then 0 else 1)
+					in
+					let flags, samples, data = (match detect_format data p with
+						| SWAV ->
+							(try
+								let i = IO.input_string data in
+								if IO.nread i 4 <> "RIFF" then raise Exit;
+								ignore(IO.nread i 4); (* size *)
+								if IO.nread i 4 <> "WAVE" || IO.nread i 4 <> "fmt " then raise Exit;
+								let chunk_size = IO.read_i32 i in
+								if not (chunk_size = 0x10 || chunk_size = 0x12 || chunk_size = 0x40) then failwith ("Unsupported chunk size " ^ string_of_int chunk_size);
+								if IO.read_ui16 i <> 1 then failwith "Not a PCM file";
+								let chan = IO.read_ui16 i in
+								if chan > 2 then failwith "Too many channels";
+								let freq = IO.read_i32 i in
+								ignore(IO.read_i32 i);
+								ignore(IO.read_i16 i);
+								let bits = IO.read_ui16 i in
+								if chunk_size <> 0x10 then ignore(IO.nread i (chunk_size - 0x10));
+								if IO.nread i 4 <> "data" then raise Exit;
+								let data_size = IO.read_i32 i in
+								let data = IO.nread i data_size in
+								make_flags 0 (chan = 1) freq bits, (data_size * 8 / (chan * bits)), data
+							with Exit | IO.No_more_input | IO.Overflow _ ->
+								error "Invalid WAV file" p
+							| Failure msg ->
+								error ("Invalid WAV file (" ^ msg ^ ")") p
+							)
+						| SMP3 ->
+							(try
+								let sampling = ref 0 in
+								let mono = ref false in
+								let samples = ref 0 in
+								let i = IO.input_string data in
+								let rec read_frame() =
+									match (try IO.read_byte i with IO.No_more_input -> -1) with
+									| -1 ->
+										()
+									| 0x49 ->
+										(* ID3 *)
+										if IO.nread i 2 <> "D3" then raise Exit;
+										ignore(IO.read_ui16 i); (* version *)
+										ignore(IO.read_byte i); (* flags *)
+										let size = IO.read_byte i land 0x7F in
+										let size = size lsl 7 lor (IO.read_byte i land 0x7F) in
+										let size = size lsl 7 lor (IO.read_byte i land 0x7F) in
+										let size = size lsl 7 lor (IO.read_byte i land 0x7F) in
+										ignore(IO.nread i size); (* id3 data *)
+										read_frame()
+									| 0x54 ->
+										(* TAG and TAG+ *)
+										if IO.nread i 3 = "AG+" then ignore(IO.nread i 223) else ignore(IO.nread i 124);
+										read_frame()
+									| 0xFF ->
+										let infos = IO.read_byte i in
+										let ver = (infos lsr 3) land 3 in
+										sampling := [|11025;0;22050;44100|].(ver);
+										let layer = (infos lsr 1) land 3 in
+										let bits = IO.read_byte i in
+										let bitrate = (if ver = 3 then [|0;32;40;48;56;64;80;96;112;128;160;192;224;256;320;-1|] else [|0;8;16;24;32;40;48;56;64;80;96;112;128;144;160;-1|]).(bits lsr 4) in
+										let srate = [|
+											[|11025;-1;22050;44100|];
+											[|12000;-1;24000;48000|];
+											[|8000;-1;16000;32000|];
+											[|-1;-1;-1;-1|]
+										|].((bits lsr 2) land 2).(ver) in
+										let pad = (bits lsr 1) land 1 in
+										mono := (IO.read_byte i) lsr 6 = 3;
+										let bpp = (if ver = 3 then 144 else 72) in
+										let size = ((bpp * bitrate * 1000) / srate) + pad - 4 in
+										ignore(IO.nread i size);
+										samples := !samples + (if layer = 3 then 384 else 1152);
+										read_frame()
+									| _ ->
+										raise Exit
+								in
+								read_frame();
+								make_flags 2 !mono !sampling 16, (!samples), ("\x00\x00" ^ data)
+							with Exit | IO.No_more_input | IO.Overflow _ ->
+								error "Invalid MP3 file" p
+							| Failure msg ->
+								error ("Invalid MP3 file (" ^ msg ^ ")") p
+							)
+						| _ ->
+							error "Sound extension not supported (only WAV or MP3)" p
+					) in
+					incr cid;
+					classes := { f9_cid = Some !cid; f9_classname = s_type_path c.cl_path } :: !classes;
+					tag (TSound { so_id = !cid; so_flags = flags; so_samples = samples; so_data = data }) :: loop l
 				| _ :: l -> loop l
 			in
 			loop c.cl_meta
@@ -849,8 +1017,7 @@ let merge com file priority (h1,tags1) (h2,tags2) =
 	let header = if priority then { h2 with h_version = max h2.h_version (swf_ver com.flash_version) } else h1 in
 	let tags1 = if priority then List.filter (function { tdata = TSetBgColor _ } -> false | _ -> true) tags1 else tags1 in
   (* remove unused tags *)
-	let use_stage = priority && Common.defined com "flash_use_stage" in
-	let as3_native = Common.defined com "as3_native" in
+	let use_stage = priority && Common.defined com Define.FlashUseStage in
 	let classes = ref [] in
 	let nframe = ref 0 in
 	let tags2 = List.filter (fun t ->
@@ -860,9 +1027,8 @@ let merge com file priority (h1,tags1) (h2,tags2) =
 		| TRemoveObject2 _
 		| TRemoveObject _ -> use_stage
 		| TShowFrame -> incr nframe; use_stage
-		(* patch : this class has a public method which redefines a private one ! *)
-		| TActionScript3 (Some (_,"org/papervision3d/render/QuadrantRenderEngine"),_) when not as3_native -> false
 		| TFilesAttributes _ | TEnableDebugger2 _ | TScenes _ -> false
+		| TMetaData _ -> not (Common.defined com Define.SwfMetadata)
 		| TSetBgColor _ -> priority
 		| TExport el when !nframe = 0 && com.flash_version >= 9. ->
 			let el = List.filter (fun e ->
@@ -893,12 +1059,6 @@ let merge com file priority (h1,tags1) (h2,tags2) =
 	in
 	List.iter loop tags2;
 	let classes = List.map (fun e -> match e.f9_cid with None -> e | Some id -> { e with f9_cid = Some (id + !max_id) }) !classes in
-  (* do additional transforms *)
-	let tags2 = List.map (fun t ->
-		match t.tdata with
-		| TActionScript3 (id,data) when not as3_native -> { t with tdata = TActionScript3 (id,make_as3_public data) }
-		| _ -> t
-	) tags2 in
   (* merge timelines *)
 	let rec loop l1 l2 =
 		match l1, l2 with
@@ -929,7 +1089,7 @@ let merge com file priority (h1,tags1) (h2,tags2) =
 let generate com swf_header =
 	let t = Common.timer "generate swf" in
 	let isf9 = com.flash_version >= 9. in
-	let swc = if Common.defined com "swc" then Some (ref "") else None in
+	let swc = if Common.defined com Define.Swc then Some (ref "") else None in
 	if swc <> None && not isf9 then failwith "SWC support is only available for Flash9+";
 	let file , codeclip = (try let f , c = ExtString.String.split com.file "@" in f, Some c with _ -> com.file , None) in
   (* list exports *)
@@ -946,12 +1106,13 @@ let generate com swf_header =
 						let extern = (match t with
 							| TClassDecl c -> c.cl_extern
 							| TEnumDecl e -> e.e_extern
+							| TAbstractDecl a -> false
 							| TTypeDecl t -> false
 						) in
 						if not extern && s_type_path (t_path t) = e.f9_classname then
 							match t with
 							| TClassDecl c ->
-								if has_meta ":bind" c.cl_meta then
+								if Meta.has Meta.Bind c.cl_meta then
 									toremove := (t_path t) :: !toremove
 								else
 									error ("Class already exists in '" ^ file ^ "', use @:bind to redefine it") (t_infos t).mt_pos
@@ -966,17 +1127,44 @@ let generate com swf_header =
 	let tags = if isf9 then build_swf9 com file swc else build_swf8 com codeclip exports in
 	let header, bg = (match swf_header with None -> default_header com | Some h -> convert_header com h) in
 	let bg = tag (TSetBgColor { cr = bg lsr 16; cg = (bg lsr 8) land 0xFF; cb = bg land 0xFF }) in
-	let debug = (if isf9 && Common.defined com "fdb" then [tag (TEnableDebugger2 (0,""))] else []) in
+	let swf_debug_password = try
+		Digest.to_hex(Digest.string (Common.defined_value com Define.SwfDebugPassword))
+	with Not_found ->
+		""
+	in
+	let debug = (if isf9 && Common.defined com Define.Fdb then [tag (TEnableDebugger2 (0, swf_debug_password))] else []) in
+	let meta_data =
+		try
+			let file = Common.defined_value com Define.SwfMetadata in
+			let file = try Common.find_file com file with Not_found -> file in
+			let data = try Std.input_file ~bin:true file with Sys_error _ -> failwith ("Metadata resource file not found : " ^ file) in
+			[tag(TMetaData (data))]
+		with Not_found ->
+			[]
+	in
 	let fattr = (if com.flash_version < 8. then [] else
 		[tag (TFilesAttributes {
-			fa_network = Common.defined com "network-sandbox";
+			fa_network = Common.defined com Define.NetworkSandbox;
 			fa_as3 = isf9;
-			fa_metadata = false;
-			fa_gpu = false;
-			fa_direct_blt = false;
+			fa_metadata = meta_data <> [];
+			fa_gpu = com.flash_version > 9. && Common.defined com Define.SwfGpu;
+			fa_direct_blt = com.flash_version > 9. && Common.defined com Define.SwfDirectBlit;
 		})]
 	) in
-	let swf = header, fattr @ bg :: debug @ tags @ [tag TShowFrame] in
+	let fattr = if Common.defined com Define.AdvancedTelemetry then fattr @ [tag (TUnknown (0x5D,"\x00\x00"))] else fattr in
+	let preframe, header =
+		if Common.defined com Define.SwfPreloaderFrame then
+			[tag TShowFrame], {h_version=header.h_version; h_size=header.h_size; h_frame_count=header.h_frame_count+1; h_fps=header.h_fps; h_compressed=header.h_compressed; }
+		else
+			[], header in
+	let swf_script_limits = try
+		let s = Common.defined_value com Define.SwfScriptTimeout in
+		let i = try int_of_string s with _ -> error "Argument to swf_script_timeout must be an integer" Ast.null_pos in
+		[tag(TScriptLimits (256, if i < 0 then 0 else if i > 65535 then 65535 else i))]
+	with Not_found ->
+		[]
+	in
+	let swf = header, fattr @ meta_data @ bg :: debug @ swf_script_limits @ preframe @ tags @ [tag TShowFrame] in
   (* merge swf libraries *)
 	let priority = ref (swf_header = None) in
 	let swf = List.fold_left (fun swf (file,lib,cl) ->
@@ -987,17 +1175,17 @@ let generate com swf_header =
 	t();
   (* write swf/swc *)
 	let t = Common.timer "write swf" in
+	let level = (try int_of_string (Common.defined_value com Define.SwfCompressLevel) with Not_found -> 9) in
+	SwfParser.init Extc.input_zip (Extc.output_zip ~level);
 	(match swc with
 	| Some cat ->
 		let ch = IO.output_strings() in
 		Swf.write ch swf;
 		let swf = IO.close_out ch in
-		let ch = IO.output_channel (open_out_bin file) in
-		let z = zip_create ch in
-		zip_write_file z "catalog.xml" (!cat) (Unix.time()) true;
-		zip_write_file z "library.swf" (match swf with [s] -> s | _ -> failwith "SWF too big for SWC") (Unix.time()) false;
-		zip_write_cdr z;
-		IO.close_out ch;
+		let z = Zip.open_out file in
+		Zip.add_entry (!cat) z "catalog.xml";
+		Zip.add_entry (match swf with [s] -> s | _ -> failwith "SWF too big for SWC") z ~level:0 "library.swf";
+		Zip.close_out z
 	| None ->
 		let ch = IO.output_channel (open_out_bin file) in
 		Swf.write ch swf;

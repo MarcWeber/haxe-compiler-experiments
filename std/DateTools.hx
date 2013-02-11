@@ -1,38 +1,36 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2013 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 /**
-	The DateTools class contains some extra functionalities for [Date]
-	manipulation. It's stored in a different class in order to prevent
-	the standard [Date] of being bloated and thus increasing the size of
-	each application using it.
+	The DateTools class contains some extra functionalities for handling [Date]
+	instances and timestamps.
+	
+	In the context of haxe dates, a timestamp is defined as the number of
+	milliseconds elapsed since 1st January 1970.
 **/
 class DateTools {
 
 	#if php
-	#elseif (neko && !macro)
+	#elseif (neko && !(macro || interp))
 	static var date_format = neko.Lib.load("std","date_format",2);
 	#else
 	private static function __format_get( d : Date, e : String ) : String {
@@ -107,14 +105,14 @@ class DateTools {
 	#end
 
 	/**
-		Format the date [d] according to the format [f]. The format
-		is compatible with the [strftime] standard format, except that there
-		is no support in Flash and JS for day and months names (due to lack
-		of proper internationalization API). On haXe/Neko/Windows, some
-		formats are not supported.
+		Format the date [d] according to the format [f]. The format is
+		compatible with the [strftime] standard format, except that there is no
+		support in Flash and JS for day and months names (due to lack of proper
+		internationalization API). On haXe/Neko/Windows, some formats are not
+		supported.
 	**/
 	public static function format( d : Date, f : String ) : String {
-		#if (neko && !macro)
+		#if (neko && !(macro || interp))
 			return new String(untyped date_format(d.__t, f.__s));
 		#elseif php
 			return untyped __call__("strftime",f,d.__t);
@@ -124,16 +122,21 @@ class DateTools {
 	}
 
 	/**
-		Returns a Date which time has been changed by [t] milliseconds.
+		Returns the result of adding timestamp [t] to Date [d].
+		
+		This is a convenience function for calling
+		Date.fromTime(d.getTime() + t).
 	**/
-	public static function delta( d : Date, t : Float ) : Date {
+	public static inline function delta( d : Date, t : Float ) : Date {
 		return Date.fromTime( d.getTime() + t );
 	}
 
 	static var DAYS_OF_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 	/**
-		Returns the number of days in a month
+		Returns the number of days in the month of Date [d].
+		
+		This method handles leap years.
 	**/
 	public static function getMonthDays( d : Date ) : Int {
 		var month = d.getMonth();
@@ -147,30 +150,30 @@ class DateTools {
 	}
 
 	/**
-		Convert a number of seconds to a date-time
+		Converts a number of seconds to a timestamp.
 	**/
-	public static function seconds( n : Float ) : Float {
+	public static inline function seconds( n : Float ) : Float {
 		return n * 1000.0;
 	}
 
 	/**
-		Convert a number of minutes to a date-time
+		Converts a number of minutes to a timestamp.
 	**/
-	public static function minutes( n : Float ) : Float {
+	public static inline function minutes( n : Float ) : Float {
 		return n * 60.0 * 1000.0;
 	}
 
 	/**
-		Convert a number of hours to a date-time
+		Converts a number of hours to a timestamp.
 	**/
-	public static function hours( n : Float ) : Float {
+	public static inline function hours( n : Float ) : Float {
 		return n * 60.0 * 60.0 * 1000.0;
 	}
 
 	/**
-		Convert a number of days to a date-time
+		Converts a number of days to a timestamp.
 	**/
-	public static function days( n : Float ) : Float {
+	public static inline function days( n : Float ) : Float {
 		return n * 24.0 * 60.0 * 60.0 * 1000.0;
 	}
 

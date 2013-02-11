@@ -1,53 +1,57 @@
 package unit;
 import Type;
 
-class ClassWithProp {
-	public var x(getX, setX) : Int;
+interface InterfWithProp {
+	public var x(get_x, set_x) : Int;
+}
+
+class ClassWithProp implements InterfWithProp {
+	public var x(get_x, set_x) : Int;
 	var _x : Int;
-	
+
 	public function new() {
 		_x = 5;
 	}
-	
-	function getX() {
+
+	function get_x() {
 		return _x;
 	}
-	function setX(v) {
+	function set_x(v) {
 		_x = v;
 		return v;
 	}
-	
-	public static var STAT_X(default, setStatX) : Int;
-	
-	static function setStatX(v) {
+
+	public static var STAT_X(default, set_STAT_X) : Int;
+
+	static function set_STAT_X(v) {
 		STAT_X = v * 2;
 		return v;
 	}
-	
+
 	static function __init__() {
 		STAT_X = 3;
 	}
-	
-	
+
+
 }
 
 class SubClassWithProp extends ClassWithProp {
-	public var y(default, setY) : Int;
-	
+	public var y(default, set) : Int;
+
 	public function new() {
 		super();
 		y = 10;
 	}
-	
-	override function getX() {
+
+	override function get_x() {
 		return _x + 1;
 	}
-	
-	function getY() {
+
+	function get_y() {
 		return y;
 	}
-	
-	function setY(v) {
+
+	function set_y(v) {
 		y = v;
 		return v;
 	}
@@ -55,11 +59,11 @@ class SubClassWithProp extends ClassWithProp {
 
 class TestReflect extends Test {
 
-	static var TYPES = [
+	static var TYPES : Array<Dynamic> = [
 		null,Int,String,Bool,Float,
-		Array,Hash,List,Date,Xml,Math,
+		Array,haxe.ds.StringMap,List,Date,Xml,Math,
 		unit.MyEnum,unit.MyClass,unit.MySubClass,
-		Class,Enum,Void,Dynamic,
+		Class,Enum,Dynamic,unit.MyInterface
 	];
 
 	static inline function u( s : String ) : String {
@@ -71,14 +75,20 @@ class TestReflect extends Test {
 	}
 
 	static inline function u2( s : String, s2 ) : String {
-		return u(s)+"."+u(s2);
+		#if as3
+		return s + "." +s2;
+		#else
+		// this causes a null pointer exception on as3 for whatever reason
+		return u(s) + "." + u(s2);
+		#end
 	}
 
 	static var TNAMES = [
 		"null","Int","String","Bool","Float",
-		"Array",u("Hash"),u("List"),"Date","Xml","Math",
+		"Array",u("haxe.ds.StringMap"),u("List"),"Date","Xml","Math",
 		u2("unit","MyEnum"),u2("unit","MyClass"),u2("unit","MySubClass"),
-		#if !flash9 u #end("Class"),u("Enum"),u("Void"),u("Dynamic"),
+		#if !flash9 u #end("Class"), u("Enum"), u("Dynamic"),
+		u2("unit","MyInterface")
 	];
 
 	public function testTypes() {
@@ -89,7 +99,7 @@ class TestReflect extends Test {
 			f( t == null );
 			if( name == u("Enum") ) {
 				// neither an enum or a class
-			} else if( t == MyEnum || t == Void || t == Bool ) {
+			} else if( t == MyEnum || t == Bool ) {
 				eq( Type.getEnumName(t), name );
 				eq( Type.resolveEnum(name), t );
 			} else {
@@ -98,9 +108,6 @@ class TestReflect extends Test {
 			}
 		}
 		infos(null);
-		// these are very specific cases since we can't allow reflection on core type
-		unspec( function() Type.getEnumConstructs(Void) );
-		unspec( function() Type.getEnumConstructs(Bool) );
 	}
 
 	public function testIs() {
@@ -123,7 +130,7 @@ class TestReflect extends Test {
 		is("",String);
 		is([],Array);
 		is(new List(),List);
-		is(new Hash(),Hash);
+		is(new haxe.ds.StringMap(),haxe.ds.StringMap);
 		is(new MyClass(0),MyClass);
 		is(new MySubClass(0),MyClass,MySubClass);
 		is(MyEnum.A,MyEnum);
@@ -133,7 +140,6 @@ class TestReflect extends Test {
 		is(function() { },null);
 		is(MyClass,Class);
 		is(MyEnum,Enum);
-		is(Void,Enum);
 		is(Class,Class);
 	}
 
@@ -164,7 +170,7 @@ class TestReflect extends Test {
 		typeof("",TClass(String));
 		typeof([],TClass(Array));
 		typeof(new List(),TClass(List));
-		typeof(new Hash(),TClass(Hash));
+		typeof(new haxe.ds.StringMap(),TClass(haxe.ds.StringMap));
 		typeof(new MyClass(0),TClass(MyClass));
 		typeof(new MySubClass(0),TClass(MySubClass));
 		typeof(MyEnum.A,TEnum(MyEnum));
@@ -174,7 +180,6 @@ class TestReflect extends Test {
 		typeof(function() {},TFunction);
 		typeof(MyClass,TObject);
 		typeof(MyEnum,TObject);
-		typeof(Void,TObject);
 		#if !flash9
 		// on flash9, Type.typeof(Class) is crashing the player
 		typeof(Class,TObject);
@@ -215,8 +220,8 @@ class TestReflect extends Test {
 		eq( i.intValue, 55 );
 		var i = Type.createEmptyInstance(MyClass);
 		t( Std.is(i,MyClass) );
-		eq( i.get(), #if (flash9 || cpp) 0 #else null #end );
-		eq( i.intValue, #if (flash9 || cpp) 0 #else null #end );
+		eq( i.get(), #if (flash9 || cpp || java || cs) 0 #else null #end );
+		eq( i.intValue, #if (flash9 || cpp || java || cs) 0 #else null #end );
 		var e : MyEnum = Type.createEnum(MyEnum,__unprotect__("A"));
 		eq( e, MyEnum.A );
 		var e : MyEnum = Type.createEnum(MyEnum,__unprotect__("C"),[55,"hello"]);
@@ -236,37 +241,63 @@ class TestReflect extends Test {
 		f( Reflect.compareMethods(a.add,b.add) );
 		f( Reflect.compareMethods(a.add,a.get) );
 		f( Reflect.compareMethods(a.add,null) );
-		f( Reflect.compareMethods(null,a.add) );
+		f( Reflect.compareMethods(null, a.add) );
+		/*
+			Comparison between a method and a closure :
+			Not widely supported atm to justify officiel support
+
+			var fadd : Dynamic = Reflect.field(a, "add");
+			var fget : Dynamic = Reflect.field(a, "get");
+			t( Reflect.compareMethods(fadd, fadd) );
+			t( Reflect.compareMethods(a.add, fadd) );
+			t( Reflect.compareMethods(fadd, a.add) );
+			f( Reflect.compareMethods(fadd, fget) );
+			f( Reflect.compareMethods(fadd, a.get) );
+			f( Reflect.compareMethods(fadd, null) );
+		*/
 	}
-	
+
 	function testGetProp() {
-		
+
 		var c = new ClassWithProp();
 		eq( c.x, 5);
+
+		eq( Reflect.getProperty(c, "x"), 5);
+		// Note: in its current state my DCE algorithm will cause a runtime error on the Reflect.setProperty line after this.
+		// This seems to be correct though because we never actually call the setter for x in tracable code. I add the
+		// next line to make sure the setter is kept for now
+		c.x = 0;
+		Reflect.setProperty(c, "x", 10);
+		eq( c.x, 10);
+		eq( Reflect.getProperty(c, "x"), 10);
+
+		var c : InterfWithProp = new ClassWithProp();
+		eq( c.x, 5);
+
 		eq( Reflect.getProperty(c, "x"), 5);
 		Reflect.setProperty(c, "x", 10);
 		eq( c.x, 10);
 		eq( Reflect.getProperty(c, "x"), 10);
-		
+
 		var c = new SubClassWithProp();
 		eq( c.x, 6);
 		eq( Reflect.getProperty(c, "x"), 6);
 		eq( c.y, 10);
 		eq( Reflect.getProperty(c, "y"), 10);
-		
+
 		Reflect.setProperty(c, "x", 10);
 		Reflect.setProperty(c, "y", 20);
-		
+
 		eq( c.x, 11);
 		eq( Reflect.getProperty(c, "x"), 11);
 		eq( c.y, 20);
 		eq( Reflect.getProperty(c, "y"), 20);
-		
+
 		eq( ClassWithProp.STAT_X, 6 );
 		eq( Reflect.getProperty(ClassWithProp, "STAT_X"), 6 );
-		
+
 		Reflect.setProperty(ClassWithProp, "STAT_X", 8);
-		
+
 		eq( ClassWithProp.STAT_X, 16 );
 		eq( Reflect.getProperty(ClassWithProp, "STAT_X"), 16 );
 	}

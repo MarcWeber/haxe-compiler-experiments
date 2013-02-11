@@ -1,104 +1,92 @@
 /*
- * Copyright (c) 2005, The haXe Project Contributors
- * All rights reserved.
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
+ * Copyright (C)2005-2012 Haxe Foundation
  *
- *   - Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   - Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THIS SOFTWARE IS PROVIDED BY THE HAXE PROJECT CONTRIBUTORS "AS IS" AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE HAXE PROJECT CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
- * DAMAGE.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
-
 /**
-	A String buffer is an efficient way to build a big string by
-	appending small elements together.
+	A String buffer is an efficient way to build a big string by appending small
+	elements together.
+	
+	Its cross-platform implementation uses String concatenation internally, but
+	StringBuf may be optimized for different targets.
+	
+	Unlike String, an instance of StringBuf is not immutable in the sense that
+	it can be passed as argument to functions which modify it by appending more
+	values. However, the internal buffer cannot be modified.
 **/
 class StringBuf {
 
+	var b:String = "";
+	
 	/**
-		Creates a new string buffer.
+		Creates a new StringBuf instance.
+		
+		This may involve initialization of the internal buffer.
 	**/
-	public function new() {
-		#if (js || cpp)
-			b = new Array();
-		#else
-			b = "";
-		#end
+	public function new() {}
+
+	/**
+		Appends the representation of [x] to [this] StringBuf.
+		
+		The exact representation of [x] may vary per platform. To get more
+		consistent behavior, this function should be called with
+		Std.string(x).
+		
+		If [x] is null, the String "null" is appended.
+	**/
+	public inline function add( x : Dynamic ) : Void {
+		b += x;
 	}
 
 	/**
-		Adds the representation of any value to the string buffer.
+		Appends the character identified by [c] to [this] StringBuf.
+		
+		If [c] is negative or has another invalid value, the result is
+		unspecified.
 	**/
-	public inline function add( x : Dynamic ) {
-		#if js
-			b[b.length] = x == null ? 'null' : x;
-		#elseif cpp
-			b[b.length] = x;
-		#else
-			b += x;
-		#end
+	public inline function addChar( c : Int ) : Void {
+		b += String.fromCharCode(c);
 	}
 
 	/**
-		Adds a part of a string to the string buffer.
+		Appends a substring of [s] to [this] StringBuf.
+		
+		This function expects [pos] and [len] to describe a valid substring of
+		[s], or else the result is unspecified. To get more robust behavior,
+		[this].add(s.substr(pos,len)) can be used instead.
+		
+		If [s] or [pos] are null, the result is unspecified.
+		
+		If [len] is omitted or null, the substring ranges from [pos] to the end
+		of [s].
 	**/
-	public inline function addSub( s : String, pos : Int, ?len : Int ) {
-		#if flash9
-			if( len == null )
-				b += s.substr(pos);
-			else
-				b += s.substr(pos,len);
-		#elseif (js || cpp)
-			b[b.length] = s.substr(pos,len);
-		#else
-			b += s.substr(pos,len);
-		#end
+	public inline function addSub( s : String, pos : Int, ?len : Int) : Void {
+		b += (len == null ? s.substr(pos) : s.substr(pos, len));
 	}
 
 	/**
-		Adds a character to the string buffer.
-	**/
-	public inline function addChar( c : Int ) untyped {
-		#if (js || cpp)
-			b[b.length] = String.fromCharCode(c);
-		#elseif (flash && !flash9)
-			b += String["fromCharCode"](c);
-		#else
-			b += String.fromCharCode(c);
-		#end
-	}
-
-	/**
-		Returns the content of the string buffer.
+		Returns the content of [this] StringBuf as String.
+		
 		The buffer is not emptied by this operation.
 	**/
 	public inline function toString() : String {
-		#if (js || cpp)
-			return b.join("");
-		#else
-			return b;
-		#end
+		return b;
 	}
-
-	private var b :
-	#if (js || cpp)
-		Array<Dynamic>
-	#else
-		String
-	#end;
 
 }
