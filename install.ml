@@ -90,7 +90,7 @@ let arg_spec = [
 		"compile to bytpecode (default: "^ bool_to_string bytecode_default ^")");
 	("--native", String (fun f -> native := bool_of_string f),
 		"compile to executable (default: "^ bool_to_string native_default ^") ");
-	("--with-zlib", String (fun f -> zlib_option := Option ((Filename.dirname (Filename.dirname f))  ^ "/include", f ^ "/lib" ) ), "zlib (.so) location");
+	("--with-zlib", String (fun f -> zlib_option := Option ((Filename.dirname (Filename.dirname f))  ^ "/include", f ^ "/libs" ) ), "zlib (.so) location");
 	("--actions", String (fun f -> actions_by_user := !actions_by_user @ Str.split (regexp ",") f) , "actions");
 ]
 
@@ -131,27 +131,31 @@ let modules l ext =
 (* data for compiling HaXe *)
 
 let libs = [
-        "ocaml/extLib";
-        "ocaml/extc/extc";
-        "ocaml/swflib/swflib";
-        "ocaml/xml-light/xml-light";
+        "libs/extLib";
+        "libs/extc/extc";
+        "libs/swflib/swflib";
+        "libs/xml-light/xml-light";
+        "libs/neko/neko";
+        "libs/javalib/java";
         "unix";
+        "libs/ziplib/zip";
         "str"
 ]
-let neko = "neko/libs/include/ocaml"
 let paths = [
-        "ocaml";
-        "ocaml/swflib";
-        "ocaml/xml-light";
-        "ocaml/extc";
-        neko
+        "libs";
+        "libs/swflib";
+        "libs/xml-light";
+        "libs/extc";
+        "libs/neko";
+        "libs/ziplib";
+        "libs/javalib"
+
 ]
 let mlist = [
         "ast";"lexer";"type";"common";"parser";"typecore";
-        "genxml";"typeload";"codegen";"optimizer";
-        neko^"/nast";neko^"/binast";neko^"/nxml";
-        "genneko";"genas3";"genjs";"genswf8";"genswf9";"genswf";"genphp";"gencpp";
-        "interp";"typer";"main";
+        "genxml";"optimizer";"typeload";"codegen";
+        "gencommon"; "genneko";"genas3";"genjs";"genswf8";"genswf9";"genswf";"genphp";"gencpp"; "gencs";"genjava";
+        "interp";"typer";"matcher";"dce";"main";
 ]
 let path_str = String.concat " " (List.map (fun s -> "-I " ^ s) paths)
 let libs_str ext = " " ^ String.concat " " (List.map (fun l -> l ^ ext) libs) ^ " "
@@ -160,44 +164,78 @@ let libs_str ext = " " ^ String.concat " " (List.map (fun l -> l ^ ext) libs) ^ 
 (* -- ACTIONS IMPLEMENTATION -- *)
 
 let action_fetch_deps(cfg) =
+        (*
 	cvs motiontwin "co ocaml/swflib";
 	cvs motiontwin "co ocaml/extc";
 	cvs motiontwin "co ocaml/extlib-dev";
 	cvs motiontwin "co ocaml/xml-light";
+        *)
 
-        command ("mkdir -p  " ^ neko );
-        svn "http://nekovm.googlecode.com/svn/trunk/libs/include/ocaml" neko;;
+        command ("mkdir -p  libs");
+        svn "https://ocamllibs.googlecode.com/svn/trunk" "libs";;
 
 
 let action_build_deps(config) =
-        if (not (Sys.file_exists "ocaml/swflib"))
+        if (not (Sys.file_exists "libs/neko"))
           then action_fetch_deps(config);
 
+	Sys.chdir "libs";
+
 	(* EXTLIB *)
-	Sys.chdir "ocaml/extlib-dev";
+        print_string "building extlib";
+	Sys.chdir "extlib";
 	command ("ocaml install.ml -nodoc -d .. " ^ (if !bytecode then "-b " else "") ^ (if !native then "-n" else ""));
 	msg "";
-	Sys.chdir "../..";
+	Sys.chdir "..";
 
 	(* EXTC *)
-	Sys.chdir "ocaml/extc";
+        print_string "building extc";
+	Sys.chdir "extc";
 	let c_opts = (if Sys.ocaml_version < "3.08" then " -ccopt -Dcaml_copy_string=copy_string " else " ") in
 	command ("ocamlc" ^ c_opts ^ " -I ../ -I " ^ config.zlib_headers ^ " extc_stubs.c");
 
-	let options = "-cclib ocaml/extc/extc_stubs" ^ config.obj_ext ^ " -cclib " ^ (Filename.dirname config.zlib_lib) ^ " extc.ml" in
+	let options = "-cclib libs/extc/extc_stubs" ^ config.obj_ext ^ " -cclib " ^ (Filename.dirname config.zlib_lib) ^ " extc.ml" in
 	if !bytecode then command ("ocamlc -a -I .. -o extc.cma " ^ options);
 	if !native then command ("ocamlopt -a -I .. -o extc.cmxa " ^ options);
-	Sys.chdir "../..";
+	Sys.chdir "..";
 
 	(* SWFLIB *)
-	Sys.chdir "ocaml/swflib";
-	let files = "-I .. -I ../extc as3.mli as3hl.mli as3code.ml as3parse.ml as3hlparse.ml swf.ml actionScript.ml swfParser.ml" in
+        print_string "building swflib";
+	Sys.chdir "swflib";
+	let files = "-I .. -I ../extc as3.mli as3hl.mli as3code.ml as3parse.ml as3hlparse.ml swf.ml actionScript.ml swfParser.ml png.mli png.ml ttf.ml" in
 	if !bytecode then command ("ocamlc -a -o swflib.cma " ^ files);
 	if !native then command ("ocamlopt -a -o swflib.cmxa " ^ files);
-	Sys.chdir "../..";
+	Sys.chdir "..";
+
+
+	(* NEKO *)
+        print_string "building neko";
+	Sys.chdir "neko";
+	let files = "-I .. nast.ml nxml.ml binast.ml nbytecode.ml ncompile.ml" in
+	if !bytecode then command ("ocamlc -a -o neko.cma " ^ files);
+	if !native then command ("ocamlopt -a -o neko.cmxa " ^ files);
+	Sys.chdir "..";
+
+
+	(* ZIPLIB *)
+        print_string "building zlib";
+	Sys.chdir "ziplib";
+	let files = "-I .. -I ../extc zlib.mli zlib.ml zip.mli zip.ml" in
+	if !bytecode then command ("ocamlc -a -o zip.cma " ^ files);
+	if !native then command ("ocamlopt -a -o zip.cmxa " ^ files);
+	Sys.chdir "..";
+
+	(* JAVALIB *)
+        print_string "building javalib";
+	Sys.chdir "javalib";
+	let files = "-I .. jData.mli jReader.ml" in
+	if !bytecode then command ("ocamlc -a -o java.cma " ^ files);
+	if !native then command ("ocamlopt -a -o java.cmxa " ^ files);
+	Sys.chdir "..";
 
 	(* XML-LIGHT *)
-	Sys.chdir "ocaml/xml-light";
+        print_string "building xml-light";
+	Sys.chdir "xml-light";
 	command ("ocamlyacc	xml_parser.mly");
 	command ("ocamlc xml.mli dtd.mli xml_parser.mli xml_lexer.mli");
 	command ("ocamllex xml_lexer.mll");
@@ -228,7 +266,7 @@ let action_build_haxe(cfg) =
 
 let action_clean(cfg) =
 	msg "clean: implementation incomplete\n";
-        indir "ocaml/extc" (fun() -> command ("make clean"));
+        indir "libs/extc" (fun() -> command ("make clean"));
         indir "ocaml" (fun() -> command "rm *.cmx *.cmi *.cma *.a *.o || true");
         command "rm *.cmx *.cmi *.cma *.a *.o || true";
 	msg "TODO";;
@@ -273,9 +311,10 @@ let actions = [
         ^ "-	cp haxe*.exe doc/CHANGES.txt $(EXPORT)\n"
         ^ "-	rsync -a --exclude .svn --exclude *.n --exclude std/mt --delete std $(EXPORT)\n"
         ^ "\n"
-        ^ "ocaml_xml_light = ocaml/xml-light/xml_parser.cmx ocaml/xml-light/xml_lexer.cmx ocaml/xml-light/dtd.cmx ocaml/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx\n"
-        ^ "ocaml_swf_lib = ocaml/swflib/swf.cmx  ocaml/swflib/actionScript.cmx ocaml/swflib/as3code.cmx ocaml/swflib/as3parse.cmx ocaml/swflib/as3hlparse.cmx ocaml/swflib/swfParser.cmx \n"
-        ^ "LIBS := $(LIBS) ocaml/extc/extc.cmxa unix.cmxa str.cmxa ./ocaml/extLib.cmxa ocaml/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) \n"
+        ^ "ocaml_xml_light = libs/xml-light/xml_parser.cmx
+        libs/xml-light/xml_lexer.cmx libs/xml-light/dtd.cmx libs/xml-light/xmlParser.cmx ocaml/xml-light/xml.cmx\n" 
+        ^ "ocaml_swf_lib = libs/swflib/swf.cmx  libs/swflib/actionScript.cmx libs/swflib/as3code.cmx libs/swflib/as3parse.cmx libs/swflib/as3hlparse.cmx ocaml/swflib/swfParser.cmx \n"
+        ^ "LIBS := $(LIBS) libs/extc/extc.cmxa unix.cmxa str.cmxa ./libs/extLib.cmxa libs/extc/extc.cmx $(ocaml_swf_lib) $(ocaml_xml_light) \n"
         ^ "LFLAGS := " ^ (match os_type with "Win32" -> " -shared " | _ -> "") ^ "  $(LFLAGS)\n"
       in
         let chan = open_out_gen [Open_append] 0 "Makefile" in
